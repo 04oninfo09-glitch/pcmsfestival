@@ -82,16 +82,16 @@ div.fixed-pop .meta { color:#6b7280; font-size:0.9rem; margin-bottom:8px; }
 """, unsafe_allow_html=True)
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 설정: 스프레드시트 URL + 시트명(기본값 고정)
+# 설정: 시트 URL + 시트명(고정 기본값)
 # ────────────────────────────────────────────────────────────────────────────────
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1dJr5dVJ50-FPD1WD2_TDwuQOK-wFjPrSBs6PYmQlEAU/edit?usp=sharing"
 DEFAULT_MAIN_SHEET_NAME = "실내 부스 배치도"
 DEFAULT_DETAILS_SHEET_NAME = "동아리 활동 설명"
 
-def get_qp() -> dict:
+def get_qp():
     return st.experimental_get_query_params()
 
-def pick_sheet_url() -> str:
+def pick_sheet_url():
     qp = get_qp()
     if "sheet" in qp and qp["sheet"] and qp["sheet"][0].strip():
         return qp["sheet"][0].strip()
@@ -103,7 +103,7 @@ def pick_sheet_url() -> str:
         pass
     return DEFAULT_SHEET_URL
 
-def pick_sheet_name(qp_key: str, secret_key: str, default_name: str) -> str:
+def pick_sheet_name(qp_key, secret_key, default_name):
     qp = get_qp()
     if qp_key in qp and qp[qp_key] and qp[qp_key][0].strip():
         return qp[qp_key][0].strip()
@@ -120,13 +120,26 @@ MAIN_SHEET_NAME = pick_sheet_name("main_sheet", "MAIN_SHEET_NAME", DEFAULT_MAIN_
 DETAILS_SHEET_NAME = pick_sheet_name("details_sheet", "DETAILS_SHEET_NAME", DEFAULT_DETAILS_SHEET_NAME)
 
 # ────────────────────────────────────────────────────────────────────────────────
+# 안전 문자열 헬퍼: 어떤 타입이 와도 안전하게 '' 또는 str로 변환
+# ────────────────────────────────────────────────────────────────────────────────
+def s(x):
+    if x is None:
+        return ""
+    try:
+        if isinstance(x, float) and pd.isna(x):
+            return ""
+    except Exception:
+        pass
+    return x if isinstance(x, str) else str(x)
+
+# ────────────────────────────────────────────────────────────────────────────────
 # Google Sheets → CSV (시트명 기반 접근: gviz/tq)
 # ────────────────────────────────────────────────────────────────────────────────
-def extract_sheet_id(google_sheet_url: str) -> str | None:
+def extract_sheet_id(google_sheet_url):
     m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", google_sheet_url)
     return m.group(1) if m else None
 
-def to_named_sheet_csv_url(google_sheet_url: str, sheet_name: str) -> str:
+def to_named_sheet_csv_url(google_sheet_url, sheet_name):
     sid = extract_sheet_id(google_sheet_url)
     if not sid:
         return google_sheet_url
@@ -134,8 +147,9 @@ def to_named_sheet_csv_url(google_sheet_url: str, sheet_name: str) -> str:
     return f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={quoted}"
 
 @st.cache_data(ttl=300)
-def load_csv(url: str, header=None) -> pd.DataFrame:
+def load_csv(url, header=None):
     df = pd.read_csv(url, header=header, dtype=str)
+    # 문자열로 강제 + NaN→None 변환
     df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
     df = df.where(pd.notnull(df), None)
     return df
@@ -144,7 +158,7 @@ def load_csv(url: str, header=None) -> pd.DataFrame:
 # 제외 규칙: 5층 1-7(반/교실)
 # ────────────────────────────────────────────────────────────────────────────────
 _pos_17_re = re.compile(r"^1[\-\s]?7(?:\s*반|\s*교실)?$", re.IGNORECASE)
-def is_excluded_booth(floor_label: str, pos: str) -> bool:
+def is_excluded_booth(floor_label, pos):
     if not floor_label or not pos: return False
     m = re.search(r"(\d+)", str(floor_label))
     floor_num = int(m.group(1)) if m else None
@@ -155,12 +169,13 @@ def is_excluded_booth(floor_label: str, pos: str) -> bool:
 # ────────────────────────────────────────────────────────────────────────────────
 # 이름 보정(별칭/오타)
 # ────────────────────────────────────────────────────────────────────────────────
-def normalize_club_name(name: str | None) -> str:
-    if not name: return ""
-    s = name.strip()
-    if s == "음-세-듣":  # 오타 교정
-        s = "음-세-들"
-    return s
+def normalize_club_name(name):
+    name = s(name).strip()
+    if name == "": 
+        return ""
+    if name == "음-세-듣":   # 오타 교정
+        name = "음-세-들"
+    return name
 
 ALIAS_TO_CANON = {
     "음-하나": "음악으로 하나되기반",
@@ -170,26 +185,24 @@ ALIAS_TO_CANON = {
 # ────────────────────────────────────────────────────────────────────────────────
 # 메인 배치 시트 파싱 (홀수행=장소, 짝수행=동아리) + 5→…→1층 정렬
 # ────────────────────────────────────────────────────────────────────────────────
-def parse_layout(df: pd.DataFrame):
+def parse_layout(df):
     rows_by_floor = {}
     n_rows, n_cols = df.shape
     for r in range(0, n_rows, 2):
         row_pos = df.iloc[r] if r < n_rows else None
         row_club = df.iloc[r+1] if (r+1) < n_rows else None
-        if row_pos is None: 
+        if row_pos is None:
             continue
 
-        floor_label = (row_pos.iloc[0] or "")
+        floor_label = s(row_pos.iloc[0])
         if not floor_label and row_club is not None:
-            floor_label = (row_club.iloc[0] or "")
-        floor_label = str(floor_label).strip() if floor_label is not None else ""
+            floor_label = s(row_club.iloc[0])
+        floor_label = floor_label.strip()
 
         row_items = []
         for c in range(1, n_cols):
-            pos = row_pos.iloc[c] if row_pos is not None else None
-            club = row_club.iloc[c] if row_club is not None else None
-            pos = pos.strip() if isinstance(pos, str) else pos
-            club = normalize_club_name(club.strip()) if isinstance(club, str) else club
+            pos  = s(row_pos.iloc[c]).strip() if row_pos is not None else ""
+            club = normalize_club_name(s(row_club.iloc[c]) if row_club is not None else "")
             if not pos:
                 continue
             if is_excluded_booth(floor_label, pos):
@@ -203,7 +216,7 @@ def parse_layout(df: pd.DataFrame):
         if row_items:
             rows_by_floor.setdefault(floor_label or "미지정", []).append(row_items)
 
-    def floor_num(label: str):
+    def floor_num(label):
         m = re.search(r"(\d+)", str(label))
         return int(m.group(1)) if m else -999999
     floors = sorted(rows_by_floor.keys(), key=lambda x: (-floor_num(x), str(x)))
@@ -222,12 +235,11 @@ except Exception as e:
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 상세 시트 로드 (동아리 활동 설명)
-#  기대 헤더: 동아리명 / 장소 / 체험유형 / 세부내용
+# 기대 헤더: 동아리명 / 장소 / 체험유형 / 세부내용
 # ────────────────────────────────────────────────────────────────────────────────
 details_by_club = {}
 try:
     det_df = load_csv(to_named_sheet_csv_url(SHEET_URL, DETAILS_SHEET_NAME), header=0)
-    # 헤더 매핑
     col_map = { (c.strip() if isinstance(c,str) else c): c for c in det_df.columns }
     name_key = next((k for k in ["동아리명","동아리","클럽명","club","Club","name","Name"] if k in col_map), None)
     if not name_key:
@@ -235,14 +247,14 @@ try:
     else:
         for _, row in det_df.iterrows():
             raw = row.get(col_map[name_key])
-            club_name = normalize_club_name(raw.strip() if isinstance(raw,str) else raw)
+            club_name = normalize_club_name(raw)
             if not club_name:
                 continue
             canon = ALIAS_TO_CANON.get(club_name, club_name)
             details_by_club[canon] = {
-                "장소": row.get(col_map.get("장소", ""), ""),
-                "체험유형": row.get(col_map.get("체험유형", ""), ""),
-                "세부내용": row.get(col_map.get("세부내용", ""), ""),
+                "장소": s(row.get(col_map.get("장소", ""), "")).strip(),
+                "체험유형": s(row.get(col_map.get("체험유형", ""), "")).strip(),
+                "세부내용": s(row.get(col_map.get("세부내용", ""), "")).strip(),
             }
 except Exception as e:
     st.warning(f"상세 시트를 불러오지 못했습니다. 시트명 '{DETAILS_SHEET_NAME}'를 확인해주세요. 오류: {e}")
@@ -254,7 +266,7 @@ club_set = set()
 for _f, rows in rows_by_floor.items():
     for row in rows:
         for it in row:
-            c = (it["club"] or "").strip()
+            c = s(it.get("club")).strip()
             if c and c != "미정":
                 club_set.add(ALIAS_TO_CANON.get(c, c))
 clubs_sorted = sorted(club_set)
@@ -271,14 +283,14 @@ st.caption(f"• 데이터: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'
 # ────────────────────────────────────────────────────────────────────────────────
 # 선택 상태 (?sel=...)
 # ────────────────────────────────────────────────────────────────────────────────
-def encode_sel(item: dict) -> str:
+def encode_sel(item):
     payload = f"{item['floor']}|{item['col_index']}|{item['pos']}|{ALIAS_TO_CANON.get(item['club'], item['club'])}"
     return urllib.parse.quote(payload, safe='')
 
-def decode_sel(s: str):
+def decode_sel(sparam):
     try:
-        s = urllib.parse.unquote(s or "")
-        floor, col, pos, club = s.split("|", 3)
+        sparam = urllib.parse.unquote(sparam or "")
+        floor, col, pos, club = sparam.split("|", 3)
         return {"floor": floor, "col_index": int(col), "pos": pos, "club": club}
     except Exception:
         return None
@@ -287,7 +299,7 @@ qparams = get_qp()
 sel_param = qparams.get("sel", [None])[0]
 current_sel = decode_sel(sel_param) if sel_param else None
 
-def same_item(a, b) -> bool:
+def same_item(a, b):
     if not a or not b: return False
     return (a["floor"] == b["floor"] and a["col_index"] == b["col_index"]
             and a["pos"] == b["pos"] and a["club"] == b["club"])
@@ -295,11 +307,14 @@ def same_item(a, b) -> bool:
 # ────────────────────────────────────────────────────────────────────────────────
 # 카드/Popover 렌더
 # ────────────────────────────────────────────────────────────────────────────────
-def booth_card_html(item: dict) -> str:
+def html_escape(text):
+    return s(text).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+
+def booth_card_html(item):
     disp = {**item, "club": ALIAS_TO_CANON.get(item["club"], item["club"])}
     sel = encode_sel(disp)
-    loc = (item["pos"] or "").replace("<", "&lt;").replace(">", "&gt;")
-    club = (disp["club"] or "미정").replace("<", "&lt;").replace(">", "&gt;")
+    loc = html_escape(item["pos"])
+    club = html_escape(disp["club"] or "미정")
     hover_text = f"{loc} · {club}"
     return f'''
     <form class="booth-form" method="get">
@@ -312,21 +327,21 @@ def booth_card_html(item: dict) -> str:
     </form>
     '''
 
-def render_fixed_popover(item: dict):
+def render_fixed_popover(item):
     canon_name = ALIAS_TO_CANON.get(item["club"], item["club"])
     detail = details_by_club.get(canon_name, {}) if details_by_club else {}
 
     st.markdown('<div class="fixed-pop">', unsafe_allow_html=True)
-    st.markdown(f"<h4>🔎 {item['pos']} | {canon_name}</h4>", unsafe_allow_html=True)
-    st.markdown(f'<div class="meta">층: <b>{item["floor"]}</b> · 교실/위치: <b>{item["pos"]}</b></div>', unsafe_allow_html=True)
+    st.markdown(f"<h4>🔎 {html_escape(item['pos'])} | {html_escape(canon_name)}</h4>", unsafe_allow_html=True)
+    st.markdown(f'<div class="meta">층: <b>{html_escape(item["floor"])}</b> · 교실/위치: <b>{html_escape(item["pos"])}</b></div>', unsafe_allow_html=True)
 
     if detail:
         if detail.get("체험유형"):
-            st.markdown(f"**체험유형**: {detail.get('체험유형')}")
+            st.markdown(f"**체험유형**: {html_escape(detail.get('체험유형'))}")
         if detail.get("세부내용"):
-            st.markdown(f"**세부내용**: {detail.get('세부내용')}")
+            st.markdown(f"**세부내용**: {html_escape(detail.get('세부내용'))}")
         if detail.get("장소"):
-            st.caption(f"참고 장소: {detail.get('장소')}")
+            st.caption(f"참고 장소: {html_escape(detail.get('장소'))}")
     else:
         st.info("세부 내용이 아직 연결되지 않았습니다. '동아리 활동 설명' 시트를 확인해주세요.")
 
