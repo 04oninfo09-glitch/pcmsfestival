@@ -5,15 +5,14 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="배재중학교 동아리 발표회", layout="wide")
-
-TITLE = "배재중학교 동아리 발표회"
-st.title(TITLE)
+st.title("배재중학교 동아리 발표회")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 전역 스타일: 균일 카드(상단=장소, 중앙=동아리)
+# 전역 CSS: 균일 카드 + 호버 풍선 + 클릭 고정 Popover
 # ────────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
+/* 카드 전체 */
 a.booth {
   position: relative;
   display: block;
@@ -28,12 +27,14 @@ a.booth {
 }
 a.booth:hover { border-color: #bdbdbd; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
 
+/* 장소(상단 중앙) */
 a.booth .loc {
   position: absolute;
   top: 8px; left: 50%; transform: translateX(-50%);
   font-weight: 700; font-size: 0.95rem; color: #333; text-align: center;
   padding: 0 6px; max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* 동아리(정중앙 살짝 위) */
 a.booth .club {
   position: absolute;
   top: 50%; left: 50%; transform: translate(-50%, -40%);
@@ -41,24 +42,67 @@ a.booth .club {
   padding: 0 8px; max-width: 92%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* 호버 풍선 미리보기 */
+a.booth .hover-pop {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;                   /* 카드 하단에서 살짝 위 */
+  transform: translateX(-50%) translateY(8px);
+  background: #1f2937;           /* 진회색 */
+  color: #fff;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  border-radius: 10px;
+  line-height: 1.25;
+  max-width: 92%;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+a.booth .hover-pop::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px 6px 0 6px;
+  border-style: solid;
+  border-color: #1f2937 transparent transparent transparent;
+}
+a.booth:hover .hover-pop {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 클릭 고정 Popover(카드 아래에 렌더) */
+div.fixed-pop {
+  background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+  padding: 12px 14px; margin-top: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+}
+div.fixed-pop h4 { margin:0 0 6px 0; }
+div.fixed-pop .meta { color:#6b7280; font-size:0.9rem; margin-bottom:8px; }
+
 @media (max-width: 640px) {
   a.booth { height: 110px; }
   a.booth .loc { font-size: 0.9rem; }
   a.booth .club { font-size: 0.95rem; }
 }
-
-div.popup-card { background:#fff; border:1px solid #eee; border-radius:12px; padding:14px 16px; }
 </style>
 """, unsafe_allow_html=True)
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 0) 시트 URL 결정 (UI 노출 없이 내부 설정)
+# 시트 URL(내부) : ?sheet=... → st.secrets["SHEET_URL"] → 기본값
 # ────────────────────────────────────────────────────────────────────────────────
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1dJr5dVJ50-FPD1WD2_TDwuQOK-wFjPrSBs6PYmQlEAU/edit?usp=sharing"
 
 def get_sheet_url() -> str:
     q = st.experimental_get_query_params()
-    if "sheet" in q and len(q["sheet"]) > 0 and q["sheet"][0].strip():
+    if "sheet" in q and q["sheet"] and q["sheet"][0].strip():
         return q["sheet"][0].strip()
     try:
         sec = st.secrets.get("SHEET_URL", "").strip()
@@ -71,7 +115,7 @@ def get_sheet_url() -> str:
 SHEET_URL = get_sheet_url()
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 1) 구글시트 불러오기 (CSV export)
+# 구글시트 로드(CSV export)
 # ────────────────────────────────────────────────────────────────────────────────
 def to_csv_url(google_sheet_url: str) -> str:
     m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", google_sheet_url)
@@ -85,7 +129,7 @@ def to_csv_url(google_sheet_url: str) -> str:
     if "gid" in q:
         gid = q["gid"][0]
     elif parsed.fragment:
-        frag_gid = re.search(r"gid=(\d+)", parsed.fragment)
+        frag_gid = re.search(r"gid=(\\d+)", parsed.fragment)
         if frag_gid:
             gid = frag_gid.group(1)
 
@@ -103,33 +147,27 @@ def load_sheet(url: str) -> pd.DataFrame:
     return df
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 2) “5층 1-7반(교실)” 제외 규칙
-#    - 층에서 숫자 추출 → 5층
-#    - 장소(pos) 정규식: 1-7 / 1-7반 / 1-7 교실 모두 제외
+# 5층 1-7반(교실) 제외 규칙
 # ────────────────────────────────────────────────────────────────────────────────
-_pos_17_re = re.compile(r"^1[\-\s]?7(?:\s*반|\s*교실)?$", re.IGNORECASE)
-
+_pos_17_re = re.compile(r"^1[\\-\\s]?7(?:\\s*반|\\s*교실)?$", re.IGNORECASE)
 def is_excluded_booth(floor_label: str, pos: str) -> bool:
-    if not floor_label or not pos:
-        return False
-    m = re.search(r"(\d+)", str(floor_label))
+    if not floor_label or not pos: return False
+    m = re.search(r"(\\d+)", str(floor_label))
     floor_num = int(m.group(1)) if m else None
     if floor_num == 5 and _pos_17_re.match(str(pos)):
         return True
     return False
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 3) 시트 파싱 (홀수행: 장소 / 짝수행: 동아리)
+# 시트 파싱(홀수행=장소, 짝수행=동아리)
 # ────────────────────────────────────────────────────────────────────────────────
 def parse_layout(df: pd.DataFrame):
     rows_by_floor = {}
     n_rows, n_cols = df.shape
-
     for r in range(0, n_rows, 2):
         row_pos = df.iloc[r] if r < n_rows else None
         row_club = df.iloc[r+1] if (r+1) < n_rows else None
-        if row_pos is None:
-            continue
+        if row_pos is None: continue
 
         floor_label = (row_pos.iloc[0] or "")
         if not floor_label and row_club is not None:
@@ -142,29 +180,21 @@ def parse_layout(df: pd.DataFrame):
             club = row_club.iloc[c] if row_club is not None else None
             pos = pos.strip() if isinstance(pos, str) else pos
             club = club.strip() if isinstance(club, str) else club
-            if not pos:
+            if not pos: continue
+            if is_excluded_booth(floor_label, pos):  # ★ 5층 1-7 제외
                 continue
-
-            # ★ 제외 규칙 적용: 5층 & 1-7(반/교실)인 부스는 스킵
-            if is_excluded_booth(floor_label, pos):
-                continue
-
             row_items.append({
                 "floor": floor_label or "미지정",
                 "pos": pos,
                 "club": club or "미정",
                 "col_index": c
             })
-        if not row_items:
-            continue
-        rows_by_floor.setdefault(floor_label or "미지정", []).append(row_items)
+        if row_items:
+            rows_by_floor.setdefault(floor_label or "미지정", []).append(row_items)
 
     def floor_key(x: str):
-        m = re.search(r"(\d+)", x)
-        if m:
-            return (-int(m.group(1)), x)  # 높은 층 먼저
-        return (0, x)
-
+        m = re.search(r"(\\d+)", x)
+        return (-int(m.group(1)), x) if m else (0, x)
     floors = sorted(rows_by_floor.keys(), key=floor_key)
     return floors, rows_by_floor
 
@@ -174,11 +204,11 @@ try:
     raw_df = load_sheet(SHEET_URL)
     floors, rows_by_floor = parse_layout(raw_df)
 except Exception as e:
-    error_box.error(f"스프레드시트를 불러오는 중 오류가 발생했습니다.\n\n{e}")
+    error_box.error(f"스프레드시트를 불러오는 중 오류가 발생했습니다.\\n\\n{e}")
     st.stop()
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 4) 메뉴바: 층 선택 + 동아리 선택(ㄱㄴㄷ 정렬)
+# 메뉴바: 층 선택 + 동아리 선택(ㄱㄴㄷ 정렬)
 # ────────────────────────────────────────────────────────────────────────────────
 club_set = set()
 for _f, rows in rows_by_floor.items():
@@ -195,10 +225,10 @@ with left:
 with right:
     sel_club = st.selectbox("동아리 선택", options=["전체"] + clubs_sorted, index=0, help="스크롤해서 동아리명을 선택하세요.")
 
-st.caption("• 부스 카드를 클릭하면 상단에 팝업이 열립니다. (상단=장소, 한가운데=동아리)")
+st.caption("• 카드 위에 마우스를 올리면 미리보기 풍선이 뜨고, 클릭하면 카드 아래에 Popover가 열립니다.")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 5) 선택 상태: 쿼리스트링 sel=...
+# 선택 상태: ?sel=... (클릭 시) → 해당 카드 아래에 고정 Popover 렌더
 # ────────────────────────────────────────────────────────────────────────────────
 def encode_sel(item: dict) -> str:
     payload = f"{item['floor']}|{item['col_index']}|{item['pos']}|{item['club']}"
@@ -216,62 +246,64 @@ qparams = st.experimental_get_query_params()
 sel_param = qparams.get("sel", [None])[0]
 current_sel = decode_sel(sel_param) if sel_param else None
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 6) 팝업(모달 대체) - 상단 카드 (시뮬레이션용 기본 필드)
-# ────────────────────────────────────────────────────────────────────────────────
-def render_popup(selected):
-    if not selected:
-        return
-    with st.container():
-        st.markdown('<div class="popup-card">', unsafe_allow_html=True)
-        st.markdown(f"### 🔎 {selected['pos']} | {selected['club']}")
-        st.markdown(f"- **층**: {selected['floor']}")
-        st.markdown(f"- **장소(교실/위치)**: {selected['pos']}")
-        st.markdown(f"- **동아리명**: {selected['club']}")
-        st.divider()
-        # 시뮬레이션용 안내 문구 (추후 실제 소개/담당/시간표 등으로 교체 예정)
-        st.info("팝업 예시입니다. 스프레드시트에 '소개/담당교사/활동시간/비고' 열을 추가해 연결해드릴게요.")
-        col1, col2 = st.columns([1,5])
-        with col1:
-            if st.button("닫기", use_container_width=True):
-                new_qp = dict(st.experimental_get_query_params())
-                new_qp.pop("sel", None)
-                st.experimental_set_query_params(**new_qp)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-render_popup(current_sel)
+def same_item(a, b) -> bool:
+    if not a or not b: return False
+    return (a["floor"] == b["floor"] and a["col_index"] == b["col_index"]
+            and a["pos"] == b["pos"] and a["club"] == b["club"])
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 7) 배치도 렌더링 (필터: 층/동아리)
+# 카드 HTML (호버 풍선 포함)
+# ────────────────────────────────────────────────────────────────────────────────
+def booth_card_html(item: dict) -> str:
+    sel = encode_sel(item)
+    href = f"?sel={sel}"
+    loc = (item["pos"] or "").replace("<", "&lt;").replace(">", "&gt;")
+    club = (item["club"] or "미정").replace("<", "&lt;").replace(">", "&gt;")
+    hover_text = f"{loc} · {club}"
+    return f'''
+    <a class="booth" href="{href}">
+      <span class="loc">{loc}</span>
+      <span class="club">{club}</span>
+      <span class="hover-pop">{hover_text}</span>
+    </a>
+    '''
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 고정 Popover 렌더(카드 바로 아래)
+# ────────────────────────────────────────────────────────────────────────────────
+def render_fixed_popover(item: dict):
+    st.markdown('<div class="fixed-pop">', unsafe_allow_html=True)
+    st.markdown(f"<h4>🔎 {item['pos']} | {item['club']}</h4>", unsafe_allow_html=True)
+    st.markdown(f'<div class="meta">층: <b>{item["floor"]}</b> · 교실/위치: <b>{item["pos"]}</b></div>', unsafe_allow_html=True)
+    st.write("팝업 예시입니다. 스프레드시트에 **소개/담당교사/활동시간/비고** 등을 추가해 연결할 수 있어요.")
+    col1, col2 = st.columns([1,5])
+    with col1:
+        if st.button("닫기", key=f"close-{item['floor']}-{item['col_index']}-{item['pos']}", use_container_width=True):
+            new_qp = dict(st.experimental_get_query_params())
+            new_qp.pop("sel", None)
+            st.experimental_set_query_params(**new_qp)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 배치도 렌더(필터: 층/동아리) + 선택된 카드 아래 Popover
 # ────────────────────────────────────────────────────────────────────────────────
 def match_filters(item):
     if sel_club != "전체" and str(item["club"]) != sel_club:
         return False
     return True
 
-def booth_card_html(item: dict) -> str:
-    sel = encode_sel(item)
-    href = f"?sel={sel}"
-    loc = (item["pos"] or "").replace("<", "&lt;").replace(">", "&gt;")
-    club = (item["club"] or "미정").replace("<", "&lt;").replace(">", "&gt;")
-    return f'''
-    <a class="booth" href="{href}">
-      <span class="loc">{loc}</span>
-      <span class="club">{club}</span>
-    </a>
-    '''
-
 def render_floor(floor_label, rows):
     st.subheader(f"🧭 {floor_label}")
     for row_items in rows:
         visible = [x for x in row_items if match_filters(x)]
-        if not visible:
-            continue
+        if not visible: continue
         visible.sort(key=lambda x: x["col_index"])
         cols = st.columns(len(visible))
         for i, item in enumerate(visible):
             with cols[i]:
                 st.markdown(booth_card_html(item), unsafe_allow_html=True)
+                if same_item(item, current_sel):
+                    render_fixed_popover(item)
 
 if sel_floor == "전체":
     for f in floors:
