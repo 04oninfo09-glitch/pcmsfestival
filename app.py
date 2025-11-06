@@ -14,8 +14,8 @@ st.set_page_config(page_title="배재중학교 동아리 발표회", layout="wid
 st.title("배재중학교 동아리 발표회")
 
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1dJr5dVJ50-FPD1WD2_TDwuQOK-wFjPrSBs6PYmQlEAU/edit?usp=sharing"
-MAIN_SHEET_NAME    = "실내 부스 배치도"     # 1번 시트 이름
-DETAILS_SHEET_NAME = "동아리 활동 설명"     # 2번 시트 이름
+MAIN_SHEET_NAME    = "실내 부스 배치도"     # 1번 시트
+DETAILS_SHEET_NAME = "동아리 활동 설명"     # 2번 시트
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 유틸
@@ -28,15 +28,12 @@ def extract_sheet_id(google_sheet_url: str) -> str | None:
     return m.group(1) if m else None
 
 def csv_url_by_sheet_name(google_sheet_url: str, sheet_name: str) -> str:
-    """
-    시트명으로 CSV를 뽑는 안정적인 방법 (gviz/tq)
-    """
     sid = extract_sheet_id(google_sheet_url)
     qname = urllib.parse.quote(sheet_name)
     return f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={qname}"
 
-# 보이지 않는 공백/컨트롤 제거 + 공백 압축
 def normalize_spaces(text) -> str:
+    """보이지 않는 공백/제로폭/NBSP/BOM/개행/탭 정리 + 다중 공백 압축"""
     if text is None:
         return ""
     if isinstance(text, float) and pd.isna(text):
@@ -50,10 +47,9 @@ def normalize_spaces(text) -> str:
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 
-BLANK_TOKENS = {"-", "—", "–"}
 def is_blank(x: str) -> bool:
-    t = normalize_spaces(x)
-    return t == "" or t in BLANK_TOKENS
+    """이제 진짜 '공백만' 비움. 하이픈('-' 등)도 데이터로 인정."""
+    return normalize_spaces(x) == ""
 
 def html_escape(t: str) -> str:
     t = normalize_spaces(t)
@@ -81,56 +77,47 @@ def is_excluded_booth(floor_label: str, pos: str) -> bool:
     return bool(floor_num == 5 and _pos_17_re.match(str(pos)))
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 데이터 로더(완전 신규): requests로 CSV 직접 로드
+# 데이터 로더: requests로 CSV 직접 로드
 # ────────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def load_sheet_csv(url: str) -> pd.DataFrame:
-    """
-    url: gviz/tq?tqx=out:csv&sheet=시트명
-    """
     resp = requests.get(url, timeout=20)
     resp.raise_for_status()
-    # UTF-8-SIG도 자동 처리
-    content = resp.content
-    df = pd.read_csv(io.BytesIO(content), dtype=str, header=None, keep_default_na=False)
-    # keep_default_na=False 덕분에 빈칸은 ""로 들어옴 → normalize_spaces에서 처리
+    df = pd.read_csv(io.BytesIO(resp.content), dtype=str, header=None, keep_default_na=False)
     return df
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 파서(새로 작성): A열=층, B열~ / 홀수행=위치, 짝수행=동아리
-#   - A열에 '층' 텍스트가 있는 행을 위치행으로 간주하고, 그 다음 행을 동아리행으로 매칭
-#   - 공백/보이지 않는 공백만 있으면 제외
+# 파서: A열=층, B열~ / 홀수행=위치, 짝수행=동아리 (사람 기준)
+#   - A열에 층 텍스트가 있는 행을 위치행으로 간주, 바로 다음 행을 동아리행으로 매칭
+#   - 공백만 있으면 제외, 한 글자라도 있으면 표시
 # ────────────────────────────────────────────────────────────────────────────────
 def parse_layout(df: pd.DataFrame) -> Tuple[List[str], Dict[str, List[List[Dict]]]]:
     rows_by_floor: Dict[str, List[List[Dict]]] = {}
     n_rows, n_cols = df.shape
-    data_start_col = 1  # B열부터 데이터
+    data_start_col = 1  # B열부터
 
     r = 0
     while r < n_rows:
-        # 위치행 후보
         row_pos = df.iloc[r] if r < n_rows else None
         if row_pos is None:
             r += 1
             continue
 
         floor_label = normalize_spaces(row_pos.iloc[0] if 0 < len(row_pos) else "")
-        # A열이 텅 빈 줄이면 다음 줄로
         if is_blank(floor_label):
             r += 1
             continue
 
-        # 동아리행은 바로 다음 줄
         if r + 1 >= n_rows:
             break
         row_club = df.iloc[r + 1]
 
-        # 실제 데이터 추출
         row_items: List[Dict] = []
         for c in range(data_start_col, n_cols):
             pos  = normalize_spaces(row_pos.iloc[c] if c < len(row_pos) else "")
             club = normalize_club_name(row_club.iloc[c] if c < len(row_club) else "")
 
+            # 공백만 비움. 하이픈 하나라도 있으면 표시.
             if is_blank(pos) or is_blank(club):
                 continue
             if is_excluded_booth(floor_label, pos):
@@ -146,10 +133,8 @@ def parse_layout(df: pd.DataFrame) -> Tuple[List[str], Dict[str, List[List[Dict]
         if row_items:
             rows_by_floor.setdefault(floor_label, []).append(row_items)
 
-        # 다음 페어로 이동(2줄 점프)
-        r += 2
+        r += 2  # 다음 페어
 
-    # 층 내림차순(5→…→1)
     def floor_num(label: str) -> int:
         m = re.search(r"(\d+)", str(label))
         return int(m.group(1)) if m else -999999
@@ -167,7 +152,6 @@ def load_details(google_sheet_url: str, sheet_name: str) -> Dict[str, Dict[str, 
     resp.raise_for_status()
     df = pd.read_csv(io.BytesIO(resp.content), dtype=str, header=0, keep_default_na=False)
 
-    # 헤더 정규화
     df.columns = [normalize_spaces(c) for c in df.columns]
     name_key = None
     for k in ["동아리명", "동아리", "클럽명", "club", "Club", "name", "Name"]:
@@ -194,7 +178,7 @@ def load_details(google_sheet_url: str, sheet_name: str) -> Dict[str, Dict[str, 
 # ────────────────────────────────────────────────────────────────────────────────
 # 데이터 로드 & 파싱
 # ────────────────────────────────────────────────────────────────────────────────
-sheet_url = DEFAULT_SHEET_URL  # 고정
+sheet_url = DEFAULT_SHEET_URL
 main_csv = csv_url_by_sheet_name(sheet_url, MAIN_SHEET_NAME)
 try:
     main_df = load_sheet_csv(main_csv)
@@ -209,18 +193,14 @@ try:
 except Exception as e:
     st.warning(f"상세 시트를 불러오지 못했습니다. 시트명 '{DETAILS_SHEET_NAME}'를 확인해주세요. 오류: {e}")
 
-# 디버그 보기(토글)
+# (옵션) 디버그 확인
 with st.expander("🔍 디버그 보기(파싱 결과 샘플)"):
-    total_items = sum(len(row) for rows in rows_by_floor.values() for row in rows)
-    st.write(f"총 층 수: {len(floors)} / 파싱된 부스 열(카드) 묶음 수: {total_items}")
-    # 샘플 10개만 표로
     sample = []
     for f in floors:
         for row in rows_by_floor[f]:
             for item in row:
                 sample.append({"층": item["floor"], "위치": item["pos"], "동아리": item["club"]})
-                if len(sample) >= 10:
-                    break
+                if len(sample) >= 10: break
             if len(sample) >= 10: break
         if len(sample) >= 10: break
     if sample:
@@ -242,10 +222,10 @@ with c1:
 with c2:
     sel_club  = st.selectbox("동아리 선택", options=["전체"] + clubs_sorted, index=0)
 
-st.caption(f"• 데이터: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'  • 공백/제로폭 문자 정규화 적용  • 5층 1-7 제외  • 5→…→1 정렬")
+st.caption(f"• 데이터: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'  • 공백만 제외(‘-’ 포함 모든 값 표시)  • 5층 1-7 제외  • 5→…→1 정렬")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 렌더(균일 카드 + 호버 풍선 + 같은 탭 팝업)
+# 렌더 (균일 카드 + 호버 풍선 + 같은 탭 팝업)
 # ────────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -297,7 +277,6 @@ def booth_card_html(item: Dict) -> str:
     loc  = html_escape(item["pos"])
     club = html_escape(ALIAS_TO_CANON.get(item["club"], item["club"]))
     hover = f"{loc} · {club}"
-    # 같은 탭 팝업을 위해 쿼리파라미터 sel 사용
     payload = urllib.parse.quote(f"{item['floor']}|{item['col_index']}|{item['pos']}|{ALIAS_TO_CANON.get(item['club'], item['club'])}", safe='')
     return f"""
     <form class="booth-form" method="get">
@@ -368,19 +347,17 @@ def render_floor(floor_label: str, rows: List[List[Dict]]):
         for i, it in enumerate(visible):
             with cols[i]:
                 st.markdown(booth_card_html(it), unsafe_allow_html=True)
-                # 같은 탭 팝업
                 if current_sel:
-                    # 비교 시 club은 정규화해 동일 기준으로
                     norm_current = {**current_sel, "club": ALIAS_TO_CANON.get(current_sel["club"], current_sel["club"])}
                     norm_item    = {**it,         "club": ALIAS_TO_CANON.get(it["club"], it["club"])}
                     if same_item(norm_item, norm_current):
                         render_popover(norm_item)
 
-# 렌더
+# 상단 필터 후 렌더
 if sel_floor == "전체":
-    for f in floors:  # 5→…→1 정렬
+    for f in floors:  # 5→…→1
         render_floor(f, rows_by_floor.get(f, []))
 else:
     render_floor(sel_floor, rows_by_floor.get(sel_floor, []))
 
-st.caption("• 공백/제로폭/개행 정규화 완료 · 공백만 있는 셀 제외 · 5층 1-7 제외 · 같은 탭 팝업")
+st.caption("• 공백만 제외(‘-’ 포함 모든 값 표시) · 보이지 않는 공백 정리 · 5층 1-7 제외 · 같은 탭 팝업 · 5→…→1 정렬")
