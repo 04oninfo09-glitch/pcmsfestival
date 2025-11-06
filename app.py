@@ -99,12 +99,24 @@ DETAILS_SHEET_NAME = pick("details_sheet", "DETAILS_SHEET_NAME", DEFAULT_DETAILS
 # ===================== 유틸 =====================
 def s(x):
     """안전 문자열 변환"""
-    if x is None: return ""
+    if x is None:
+        return ""
     try:
-        if isinstance(x, float) and pd.isna(x): return ""
+        if isinstance(x, float) and pd.isna(x):
+            return ""
     except Exception:
         pass
     return x if isinstance(x, str) else str(x)
+
+def is_blank(x: str) -> bool:
+    """스페이스/전각스페이스/탭 등 공백만 있으면 True"""
+    if x is None:
+        return True
+    # 다양한 공백 문자 제거
+    t = s(x)
+    # \u3000(전각 스페이스) 등도 제거
+    t = t.replace("\u3000", " ").strip()
+    return t == ""
 
 def html_escape(t): 
     return s(t).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
@@ -121,14 +133,23 @@ def to_named_sheet_csv_url(url, sheet_name):
 @st.cache_data(ttl=300)
 def load_csv(url, header=None):
     df = pd.read_csv(url, header=header, dtype=str)
+    # 문자열 정리
     df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
     df = df.where(pd.notnull(df), None)
     return df
 
+# 캐시 강제 새로고침 (버튼/쿼리)
+refresh_q = qp().get("refresh", ["0"])[0] == "1"
+col_refresh, _ = st.columns([1, 8])
+with col_refresh:
+    if st.button("🔄 데이터 새로고침", use_container_width=True) or refresh_q:
+        st.cache_data.clear()
+
 # 5층 1-7 제외
 _pos_17_re = re.compile(r"^1[\-\s]?7(?:\s*반|\s*교실)?$", re.IGNORECASE)
 def is_excluded_booth(floor_label, pos):
-    if not floor_label or not pos: return False
+    if is_blank(floor_label) or is_blank(pos):
+        return False
     m = re.search(r"(\d+)", str(floor_label))
     floor_num = int(m.group(1)) if m else None
     return bool(floor_num == 5 and _pos_17_re.match(str(pos)))
@@ -145,53 +166,53 @@ ALIAS_TO_CANON = {
     "음-세-들": "음악으로 세상 들여다 보기반",
 }
 
-# ===================== 배치 파서 (A열=층, B열~ / 1행부터: 홀수=위치, 짝수=동아리) =====================
+# ===================== 배치 파서 (A열=층, B열~ / 홀수=위치, 짝수=동아리) =====================
 def parse_layout(df: pd.DataFrame):
     """
     사람 기준 행 번호:
       1,3,5,...(홀수행)  = 위치행
       2,4,6,...(짝수행)  = 동아리행
-    파이썬 인덱스(0부터)로는:
+    파이썬 인덱스(0부터):
       r(0,2,4,...) = 위치행, r+1 = 동아리행
-    A열(0번열)은 '층', B열(1번열)부터 데이터.
+    A열(0번)은 '층', B열(1번)부터 데이터.
     """
     rows_by_floor = {}
     n_rows, n_cols = df.shape
-    # 최소 2열(B열 존재) 보장
-    data_start_col = 1
+    data_start_col = 1  # B열부터
 
     for r in range(0, n_rows, 2):
         row_pos = df.iloc[r] if r < n_rows else None           # 위치행
-        row_club = df.iloc[r+1] if (r+1) < n_rows else None     # 동아리행 (없으면 스킵)
-
+        row_club = df.iloc[r+1] if (r+1) < n_rows else None     # 동아리행
         if row_pos is None or row_club is None:
-            continue  # 동아리행이 없으면 해당 묶음 무시
+            continue
 
-        floor_label = s(row_pos.iloc[0]).strip()  # A열=층 (위치행 기준)
-        if floor_label == "" and row_club is not None:
+        floor_label = s(row_pos.iloc[0]).strip()
+        if is_blank(floor_label) and row_club is not None:
             floor_label = s(row_club.iloc[0]).strip()
-        if floor_label == "":
+        if is_blank(floor_label):
             floor_label = "미지정"
 
         row_items = []
-        # B열부터 끝까지
         for c in range(data_start_col, n_cols):
-            pos = s(row_pos.iloc[c]).strip()
-            club_raw = s(row_club.iloc[c]).strip()
+            pos_raw  = s(row_pos.iloc[c])
+            club_raw = s(row_club.iloc[c])
 
-            if not pos:
-                continue  # 위치가 없으면 부스 없음
+            # 공백만 있는 셀은 표시하지 않음
+            if is_blank(pos_raw) or is_blank(club_raw):
+                continue
+
+            pos  = pos_raw.strip()
+            club_norm = normalize_club_name(club_raw)
+            if is_blank(pos) or is_blank(club_norm):
+                continue
 
             if is_excluded_booth(floor_label, pos):
                 continue
 
-            club_norm = normalize_club_name(club_raw)
-            club = club_norm if club_norm else "미정"  # 진짜 비었을 때만 미정
-
             row_items.append({
                 "floor": floor_label,
                 "pos": pos,
-                "club": club,
+                "club": club_norm,
                 "col_index": c
             })
 
@@ -226,7 +247,7 @@ try:
         for _, row in det_df.iterrows():
             raw = row.get(col_map[name_key])
             club_name = normalize_club_name(raw)
-            if not club_name: 
+            if is_blank(club_name):
                 continue
             canon = ALIAS_TO_CANON.get(club_name, club_name)
             details_by_club[canon] = {
@@ -243,7 +264,7 @@ for _f, rows in rows_by_floor.items():
     for row in rows:
         for it in row:
             c = s(it.get("club")).strip()
-            if c and c != "미정":
+            if not is_blank(c):
                 club_set.add(ALIAS_TO_CANON.get(c, c))
 clubs_sorted = sorted(club_set)
 
@@ -254,7 +275,7 @@ with right:
     sel_club = st.selectbox("동아리 선택", options=["전체"] + clubs_sorted, index=0,
                             help="스크롤해서 동아리명을 선택하세요.")
 
-st.caption(f"• 데이터: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'  • 호버=풍선 / 클릭=같은 탭 Popover")
+st.caption(f"• 데이터: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'  • 호버=풍선 / 클릭=같은 탭 Popover  • 공백 셀은 표시하지 않음")
 
 # ===================== 선택 상태 (?sel=...) =====================
 def encode_sel(item):
@@ -283,7 +304,7 @@ def booth_card_html(item):
     disp = {**item, "club": ALIAS_TO_CANON.get(item["club"], item["club"])}
     sel = encode_sel(disp)
     loc = html_escape(item["pos"])
-    club = html_escape(disp["club"] or "미정")
+    club = html_escape(disp["club"])
     hover_text = f"{loc} · {club}"
     return f'''
     <form class="booth-form" method="get">
@@ -305,11 +326,11 @@ def render_fixed_popover(item):
     st.markdown(f'<div class="meta">층: <b>{html_escape(item["floor"])}</b> · 교실/위치: <b>{html_escape(item["pos"])}</b></div>', unsafe_allow_html=True)
 
     if detail:
-        if detail.get("체험유형"):
+        if not is_blank(detail.get("체험유형","")):
             st.markdown(f"**체험유형**: {html_escape(detail.get('체험유형'))}")
-        if detail.get("세부내용"):
+        if not is_blank(detail.get("세부내용","")):
             st.markdown(f"**세부내용**: {html_escape(detail.get('세부내용'))}")
-        if detail.get("장소"):
+        if not is_blank(detail.get("장소","")):
             st.caption(f"참고 장소: {html_escape(detail.get('장소'))}")
     else:
         st.info("세부 내용이 아직 연결되지 않았습니다. '동아리 활동 설명' 시트를 확인해주세요.")
@@ -352,4 +373,4 @@ else:
     render_floor(sel_floor, rows_by_floor.get(sel_floor, []), sel_club)
 
 st.write("")
-st.caption(f"데이터 원본: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}' · 5층 1-7 제외 · 층 내림차순")
+st.caption(f"데이터 원본: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}' · 공백 셀 미표시 · 5층 1-7 제외 · 층 내림차순  • 강제 새로고침: 버튼 또는 URL에 ?refresh=1")
