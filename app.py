@@ -52,24 +52,20 @@ div.popup-card { background:#fff; border:1px solid #eee; border-radius:12px; pad
 """, unsafe_allow_html=True)
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 0) 시트 URL 결정(메뉴바 UI 없이 내부에서만 설정)
-#    우선순위: ?sheet=... → st.secrets["SHEET_URL"] → DEFAULT_SHEET_URL
+# 0) 시트 URL 결정 (UI 노출 없이 내부 설정)
 # ────────────────────────────────────────────────────────────────────────────────
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1dJr5dVJ50-FPD1WD2_TDwuQOK-wFjPrSBs6PYmQlEAU/edit?usp=sharing"
 
 def get_sheet_url() -> str:
-    # 1) 쿼리스트링(sheet) 우선
     q = st.experimental_get_query_params()
     if "sheet" in q and len(q["sheet"]) > 0 and q["sheet"][0].strip():
         return q["sheet"][0].strip()
-    # 2) secrets
     try:
         sec = st.secrets.get("SHEET_URL", "").strip()
         if sec:
             return sec
     except Exception:
         pass
-    # 3) 기본값
     return DEFAULT_SHEET_URL
 
 SHEET_URL = get_sheet_url()
@@ -151,7 +147,7 @@ def parse_layout(df: pd.DataFrame):
     floors = sorted(rows_by_floor.keys(), key=floor_key)
     return floors, rows_by_floor
 
-# 데이터 로드
+# 데이터 로드 & 파싱
 error_box = st.empty()
 try:
     raw_df = load_sheet(SHEET_URL)
@@ -161,18 +157,28 @@ except Exception as e:
     st.stop()
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 3) 필터/검색 (UI 단순화, 시트 URL 입력창 제거)
+# 3) 메뉴바: 층 선택 + 동아리 선택(스크롤 드롭다운, ㄱㄴㄷ 정렬)
 # ────────────────────────────────────────────────────────────────────────────────
+# 동아리 목록 수집(중복 제거, '미정' 제외)
+club_set = set()
+for _f, rows in rows_by_floor.items():
+    for row in rows:
+        for it in row:
+            c = (it["club"] or "").strip()
+            if c and c != "미정":
+                club_set.add(c)
+clubs_sorted = sorted(club_set)  # 한글 ㄱㄴㄷ 순 정렬에 충분
+
 left, right = st.columns([2, 3])
 with left:
     sel_floor = st.selectbox("층 선택", options=["전체"] + floors, index=0)
 with right:
-    q = st.text_input("동아리/장소 검색", value="", placeholder="예: 과학동아리, 3-2반, 체육관...")
+    sel_club = st.selectbox("동아리 선택", options=["전체"] + clubs_sorted, index=0, help="스크롤해서 동아리명을 선택하세요.")
 
 st.caption("• 카드(네모박스)를 클릭하면 상단에 상세 팝업이 열립니다. (상단=장소, 한가운데=동아리)")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 4) 선택 상태: 쿼리스트링 sel=... (호환성 위해 experimental_ API 사용)
+# 4) 선택 상태: 쿼리스트링 sel=... (카드 클릭 시)
 # ────────────────────────────────────────────────────────────────────────────────
 def encode_sel(item: dict) -> str:
     payload = f"{item['floor']}|{item['col_index']}|{item['pos']}|{item['club']}"
@@ -186,7 +192,6 @@ def decode_sel(s: str):
     except Exception:
         return None
 
-# 현재 선택 읽기
 qparams = st.experimental_get_query_params()
 sel_param = qparams.get("sel", [None])[0]
 current_sel = decode_sel(sel_param) if sel_param else None
@@ -208,7 +213,6 @@ def render_popup(selected):
         col1, col2 = st.columns([1,5])
         with col1:
             if st.button("닫기", use_container_width=True):
-                # sel 파라미터 제거
                 new_qp = dict(st.experimental_get_query_params())
                 new_qp.pop("sel", None)
                 st.experimental_set_query_params(**new_qp)
@@ -217,13 +221,12 @@ def render_popup(selected):
 render_popup(current_sel)
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 6) 배치도 렌더링 (균일 카드 + 위치/동아리 배치)
+# 6) 배치도 렌더링 (필터: 층/동아리)
 # ────────────────────────────────────────────────────────────────────────────────
-def match_query(item, q):
-    if not q:
-        return True
-    ql = q.lower()
-    return (ql in str(item["pos"]).lower()) or (ql in str(item["club"]).lower()) or (ql in str(item["floor"]).lower())
+def match_filters(item):
+    if sel_club != "전체" and str(item["club"]) != sel_club:
+        return False
+    return True
 
 def booth_card_html(item: dict) -> str:
     sel = encode_sel(item)
@@ -240,7 +243,7 @@ def booth_card_html(item: dict) -> str:
 def render_floor(floor_label, rows):
     st.subheader(f"🧭 {floor_label}")
     for row_items in rows:
-        visible = [x for x in row_items if match_query(x, q)]
+        visible = [x for x in row_items if match_filters(x)]
         if not visible:
             continue
         visible.sort(key=lambda x: x["col_index"])
@@ -249,7 +252,6 @@ def render_floor(floor_label, rows):
             with cols[i]:
                 st.markdown(booth_card_html(item), unsafe_allow_html=True)
 
-# 전체/선택 층 렌더링
 if sel_floor == "전체":
     for f in floors:
         render_floor(f, rows_by_floor[f])
