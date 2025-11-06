@@ -1,254 +1,211 @@
+import re
+from urllib.parse import urlparse, parse_qs
+import pandas as pd
 import streamlit as st
 
-# 기본 설정
-st.set_page_config(
-    page_title="배재중학교 동아리 발표회",
-    layout="wide",
-)
+st.set_page_config(page_title="배재중학교 동아리 발표회", layout="wide")
 
-# ----- 동아리 / 교실 데이터 정의 -----
-# row, col 값을 바꾸면 배치도에서 위치가 바뀝니다.
-# 실제 학교 배치에 맞게 언제든지 수정하면 돼요.
-ROOMS = [
-    {
-        "id": "3-1",
-        "name": "3-1 교실",
-        "club": "과학 탐구 동아리",
-        "summary": "실험과 탐구를 좋아하는 친구들이 모인 과학 동아리입니다.",
-        "detail": """
-- 주요 활동: 화학·물리 실험, 과학 키트 만들기, 실험 결과 발표
-- 운영 시간: 매주 화요일 7~8교시
-- 담당 교사: 김과학 선생님
-- 모집 대상: 과학을 좋아하는 1~3학년
-        """,
-        "row": 1,
-        "col": 1,
-    },
-    {
-        "id": "3-2",
-        "name": "3-2 교실",
-        "club": "밴드 동아리",
-        "summary": "보컬, 기타, 드럼 등으로 공연을 준비하는 밴드 동아리입니다.",
-        "detail": """
-- 주요 활동: 합주 연습, 학교 행사 공연, 자작곡 연주
-- 운영 시간: 매주 수요일 7~8교시, 토요일 자율연습
-- 담당 교사: 이음악 선생님
-- 모집 대상: 악기를 배우고 싶은 학생 누구나
-        """,
-        "row": 1,
-        "col": 2,
-    },
-    {
-        "id": "3-3",
-        "name": "3-3 교실",
-        "club": "미술 동아리",
-        "summary": "그림, 디자인, 공예를 함께 만드는 미술 동아리입니다.",
-        "detail": """
-- 주요 활동: 수채화, 아크릴화, 캐릭터 디자인, 전시 준비
-- 운영 시간: 매주 월요일 7~8교시
-- 담당 교사: 박미술 선생님
-- 모집 대상: 그림 그리기를 좋아하는 학생
-        """,
-        "row": 1,
-        "col": 3,
-    },
-    {
-        "id": "2-1",
-        "name": "2-1 교실",
-        "club": "코딩 동아리",
-        "summary": "파이썬, 스크래치로 게임과 프로그램을 만드는 코딩 동아리입니다.",
-        "detail": """
-- 주요 활동: 게임 만들기, 간단한 웹페이지 제작, 알고리즘 기초
-- 운영 시간: 매주 목요일 7~8교시
-- 담당 교사: 최정보 선생님
-- 모집 대상: 코딩에 관심 있는 학생 (기초 무관)
-        """,
-        "row": 2,
-        "col": 1,
-    },
-    {
-        "id": "2-2",
-        "name": "2-2 교실",
-        "club": "사진·영상 동아리",
-        "summary": "사진 촬영과 영상 편집을 배우는 미디어 동아리입니다.",
-        "detail": """
-- 주요 활동: 학교 행사 촬영, 브이로그 제작, 편집 기초 배우기
-- 운영 시간: 매주 금요일 7~8교시
-- 담당 교사: 정미디어 선생님
-- 모집 대상: 사진·영상에 관심 있는 학생
-        """,
-        "row": 2,
-        "col": 2,
-    },
-    {
-        "id": "2-3",
-        "name": "2-3 교실",
-        "club": "보드게임 동아리",
-        "summary": "전략 보드게임과 협동 게임을 함께 즐기는 동아리입니다.",
-        "detail": """
-- 주요 활동: 다양한 보드게임 플레이, 학교 대회 개최
-- 운영 시간: 매주 수요일 점심시간 + 7교시
-- 담당 교사: 한논리 선생님
-- 모집 대상: 보드게임 좋아하는 누구나
-        """,
-        "row": 2,
-        "col": 3,
-    },
-    {
-        "id": "1-1",
-        "name": "1-1 교실",
-        "club": "독서 토론 동아리",
-        "summary": "책을 읽고 생각을 나누는 독서 토론 동아리입니다.",
-        "detail": """
-- 주요 활동: 한 달 한 권 같이 읽기, 독서 토론, 서평 쓰기
-- 운영 시간: 매주 화요일 점심시간
-- 담당 교사: 오독서 선생님
-- 모집 대상: 책 읽는 걸 좋아하는 학생
-        """,
-        "row": 3,
-        "col": 1,
-    },
-    {
-        "id": "1-2",
-        "name": "1-2 교실",
-        "club": "스포츠 동아리",
-        "summary": "농구, 풋살 등 다양한 스포츠를 즐기는 동아리입니다.",
-        "detail": """
-- 주요 활동: 농구·풋살 경기, 체력 단련, 학급 대항전 준비
-- 운영 시간: 매주 월·목방과후
-- 담당 교사: 김체육 선생님
-- 모집 대상: 운동을 좋아하는 학생
-        """,
-        "row": 3,
-        "col": 2,
-    },
-    {
-        "id": "1-3",
-        "name": "1-3 교실",
-        "club": "봉사 동아리",
-        "summary": "학교 안팎에서 봉사 활동을 기획하고 실천하는 동아리입니다.",
-        "detail": """
-- 주요 활동: 교내 환경 정리, 지역 봉사, 기부 캠페인
-- 운영 시간: 격주 금요일 7~8교시
-- 담당 교사: 장나눔 선생님
-- 모집 대상: 봉사를 통해 보람을 느끼고 싶은 학생
-        """,
-        "row": 3,
-        "col": 3,
-    },
-]
+TITLE = "배재중학교 동아리 발표회"
+st.title(TITLE)
 
-# ----- 간단한 스타일(배치도 타일 예쁘게) -----
-st.markdown(
+# ────────────────────────────────────────────────────────────────────────────────
+# 1) 구글시트 불러오기 (공유: 링크가 있는 모든 사용자가 보기 권장)
+#    - 스프레드시트 URL을 CSV export URL로 변환해 pandas로 읽습니다.
+# ────────────────────────────────────────────────────────────────────────────────
+def to_csv_url(google_sheet_url: str) -> str:
     """
-    <style>
-    .room-box {
-        padding: 0.75rem 0.9rem;
-        border-radius: 0.8rem;
-        border: 1px solid #e0e0e0;
-        background-color: #f9fafb;
-        text-align: center;
-        font-size: 0.9rem;
-        height: 100%;
-    }
-    .room-name {
-        font-weight: 700;
-        margin-bottom: 0.2rem;
-    }
-    .room-club {
-        font-size: 0.8rem;
-        color: #555;
-        margin-bottom: 0.5rem;
-        min-height: 2.2em;
-    }
-    .room-btn button {
-        width: 100%;
-        border-radius: 999px !important;
-    }
-    .floor-label {
-        font-weight: 600;
-        margin: 1.2rem 0 0.4rem 0;
-        font-size: 1rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
+    다양한 형태의 구글스프레드시트 URL을 CSV export URL로 안전 변환
+    예) https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit?usp=sharing
+        -> https://docs.google.com/spreadsheets/d/<SHEET_ID>/export?format=csv
+    gid가 지정되면 그 시트 탭만 가져옵니다.
+    """
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", google_sheet_url)
+    if not m:
+        return google_sheet_url
+    sheet_id = m.group(1)
+
+    # gid 추출
+    parsed = urlparse(google_sheet_url)
+    q = parse_qs(parsed.query)
+    gid = None
+    # 일반 edit URL의 경우 fragment나 query에 gid가 있을 수 있음
+    if "gid" in q:
+        gid = q["gid"][0]
+    elif parsed.fragment:
+        # ex) .../edit#gid=123456
+        frag_gid = re.search(r"gid=(\d+)", parsed.fragment)
+        if frag_gid:
+            gid = frag_gid.group(1)
+
+    base = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    if gid:
+        base += f"&gid={gid}"
+    return base
+
+@st.cache_data(ttl=300)
+def load_sheet(url: str) -> pd.DataFrame:
+    csv_url = to_csv_url(url)
+    df = pd.read_csv(csv_url, header=None, dtype=str)
+    # 공백 제거 및 NaN 정리
+    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    df = df.where(pd.notnull(df), None)
+    return df
+
+# 사용자가 바꿀 수 있게 사이드바에 URL 입력
+sheet_url = st.sidebar.text_input(
+    "구글 스프레드시트 URL",
+    value="https://docs.google.com/spreadsheets/d/1dJr5dVJ50-FPD1WD2_TDwuQOK-wFjPrSBs6PYmQlEAU/edit?usp=sharing",
+    help="A열=층, 홀수행=장소(교실/위치), 짝수행=동아리명 형식으로 작성해 주세요."
 )
 
-# ----- 헤더 -----
-st.title("배재중학교 동아리 발표회")
-st.write(
-    "아래 배치도에서 **교실(부스)**를 클릭하면, 해당 동아리 소개가 팝업으로 나타납니다. 😊"
-)
+# ────────────────────────────────────────────────────────────────────────────────
+# 2) 시트 파싱 규칙
+#    - A열: 층(예: 3F, 2층 등) — 홀수행/짝수행 모두 같은 층 표기 권장
+#    - 홀수행(1,3,5...): B열부터 위치명(교실/공간)
+#    - 짝수행(2,4,6...): B열부터 동아리명 (위치명과 같은 열에 매칭)
+# ────────────────────────────────────────────────────────────────────────────────
+def parse_layout(df: pd.DataFrame):
+    """
+    df: 헤더 없는 표 전체
+    return:
+      floors: 정렬된 층 목록
+      rows_by_floor: { floor_label: [ [ {pos, club, col_index}, ... ] , ... ] }
+                     같은 floor 안에서 '한 줄(홀수행+짝수행)' 단위로 끊어서 표시
+    """
+    rows_by_floor = {}
+    n_rows, n_cols = df.shape
 
-st.divider()
+    # 두 줄(홀수/짝수) 단위로 읽음
+    for r in range(0, n_rows, 2):
+        row_pos = df.iloc[r] if r < n_rows else None
+        row_club = df.iloc[r+1] if (r+1) < n_rows else None
 
-# ----- 배치도(그리드) 생성 -----
-max_row = max(r["row"] for r in ROOMS)
-max_col = max(r["col"] for r in ROOMS)
+        if row_pos is None:
+            continue
 
-# 층 이름 예시 (원하면 수정 가능)
-floor_names = {
-    1: "3층",
-    2: "2층",
-    3: "1층",
-}
+        floor_label = (row_pos.iloc[0] or "").strip() if isinstance(row_pos.iloc[0], str) else (row_pos.iloc[0] or "")
+        # 짝수행(동아리명)에도 A열에 층 정보가 들어있다면 우선 홀수행 기준 사용
+        if not floor_label and row_club is not None:
+            floor_label = (row_club.iloc[0] or "")
 
-for row in range(1, max_row + 1):
-    # 층 라벨
-    floor_label = floor_names.get(row, f"{row}층")
-    st.markdown(f'<div class="floor-label">🏫 {floor_label}</div>', unsafe_allow_html=True)
+        # 최소 한 글자라도 있어야 층으로 봄
+        floor_label = str(floor_label).strip() if floor_label is not None else ""
 
-    cols = st.columns(max_col, gap="small")
-    for col in range(1, max_col + 1):
-        with cols[col - 1]:
-            room = next(
-                (rm for rm in ROOMS if rm["row"] == row and rm["col"] == col),
-                None,
-            )
-            if room:
-                with st.container():
-                    st.markdown('<div class="room-box">', unsafe_allow_html=True)
-                    st.markdown(
-                        f'<div class="room-name">{room["name"]}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
-                        f'<div class="room-club">{room["club"]}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    # 버튼(클릭 시 모달 오픈)
-                    btn_key = f"btn_{room['id']}"
-                    clicked = st.button(
-                        "자세히 보기",
-                        key=btn_key,
-                    )
-                    st.markdown("</div>", unsafe_allow_html=True)
+        # B열부터 각 칸(열)마다 위치/클럽 매칭
+        row_items = []
+        for c in range(1, n_cols):
+            pos = None
+            club = None
+            if row_pos is not None:
+                pos = row_pos.iloc[c]
+            if row_club is not None:
+                club = row_club.iloc[c]
+            pos = pos.strip() if isinstance(pos, str) else pos
+            club = club.strip() if isinstance(club, str) else club
 
-                    if clicked:
-                        st.session_state["modal_room_id"] = room["id"]
-            else:
-                st.empty()
+            # 위치명(교실 등)이 비어 있으면 스킵
+            if not pos:
+                continue
 
-st.divider()
+            row_items.append({
+                "floor": floor_label or "미지정",
+                "pos": pos,
+                "club": club or "미정",
+                "col_index": c
+            })
 
-st.caption("※ 실제 배치와 다를 수 있으며, 동아리·교실 정보는 예시입니다. 필요한 대로 코드를 수정해서 사용하세요.")
+        if not row_items:
+            continue
 
-# ----- 모달(팝업) -----
-if "modal_room_id" in st.session_state:
-    selected_id = st.session_state["modal_room_id"]
-    selected_room = next((rm for rm in ROOMS if rm["id"] == selected_id), None)
+        rows_by_floor.setdefault(floor_label or "미지정", []).append(row_items)
 
-    if selected_room:
-        with st.modal(f"{selected_room['name']} · {selected_room['club']}"):
-            st.subheader(selected_room["club"])
-            st.write(f"**위치:** {selected_room['name']}")
-            st.write(selected_room["summary"])
-            st.markdown("---")
-            st.markdown(selected_room["detail"])
+    # 층 정렬: 숫자/한글/영문 혼합 가능 → 숫자 우선 추출하여 역정렬(3층→2층→1층)
+    def floor_key(x: str):
+        m = re.search(r"(\d+)", x)
+        if m:
+            # 큰 숫자가 위쪽(상층)이라고 가정하여 내림차순용 -int
+            return (-int(m.group(1)), x)
+        return (0, x)
 
-            st.info("※ 이 영역에 활동 사진, 시간표, 행사 일정 등을 더 넣어도 좋아요!")
+    floors = sorted(rows_by_floor.keys(), key=floor_key)
+    return floors, rows_by_floor
 
-            if st.button("닫기", use_container_width=True):
-                st.session_state.pop("modal_room_id", None)
-                st.rerun()
+# 데이터 로드 & 파싱
+error_box = st.empty()
+try:
+    raw_df = load_sheet(sheet_url)
+    floors, rows_by_floor = parse_layout(raw_df)
+except Exception as e:
+    error_box.error(f"스프레드시트를 불러오는 중 오류가 발생했습니다.\n\n{e}")
+    st.stop()
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 3) 필터/검색 UI
+# ────────────────────────────────────────────────────────────────────────────────
+left, right = st.columns([2, 3])
+with left:
+    sel_floor = st.selectbox("층 선택", options=["전체"] + floors, index=0)
+with right:
+    q = st.text_input("동아리/장소 검색", value="", placeholder="예: 과학동아리, 3-2반, 체육관...")
+
+st.caption("• 각 사각형 버튼을 클릭하면 해당 동아리 정보가 팝업으로 열립니다.")
+
+# 모달 상태 저장
+if "modal_payload" not in st.session_state:
+    st.session_state["modal_payload"] = None
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 4) 배치도 렌더링
+#    - 한 층(floor) 안에서 '한 줄(홀수행+짝수행)'씩 가로로 columns를 만들어 버튼 표시
+#    - 검색어가 있으면 해당 줄에서 매칭되는 칸만 남김(없으면 줄 숨김)
+# ────────────────────────────────────────────────────────────────────────────────
+def match_query(item, q):
+    if not q:
+        return True
+    ql = q.lower()
+    return (ql in str(item["pos"]).lower()) or (ql in str(item["club"]).lower()) or (ql in str(item["floor"]).lower())
+
+def render_floor(floor_label, rows):
+    st.subheader(f"🧭 {floor_label}")
+    for row_items in rows:
+        # 검색 필터
+        visible = [x for x in row_items if match_query(x, q)]
+        if not visible:
+            continue
+
+        # 원래 열 순서 유지
+        visible.sort(key=lambda x: x["col_index"])
+
+        cols = st.columns(len(visible))
+        for i, item in enumerate(visible):
+            with cols[i]:
+                label = f"**{item['pos']}**\n\n{item['club']}"
+                if st.button(label, key=f"{floor_label}-{item['pos']}-{item['col_index']}", use_container_width=True):
+                    st.session_state["modal_payload"] = item
+
+# 전체/특정 층 렌더링
+if sel_floor == "전체":
+    for f in floors:
+        render_floor(f, rows_by_floor[f])
+else:
+    render_floor(sel_floor, rows_by_floor.get(sel_floor, []))
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 5) 모달 팝업
+# ────────────────────────────────────────────────────────────────────────────────
+if st.session_state["modal_payload"] is not None:
+    item = st.session_state["modal_payload"]
+    with st.modal(f"🔎 {item['pos']} | {item['club']}"):
+        st.markdown(f"### {item['club']}")
+        st.markdown(f"- **층**: {item['floor']}")
+        st.markdown(f"- **장소(교실/위치)**: {item['pos']}")
+        st.divider()
+        st.info("필요하면 이 공간에 동아리 소개글, 담당교사, 활동 사진 링크 등을 추가할 수 있어요.\n\n스프레드시트에 소개/담당/비고 같은 열을 추가하고 파서에서 읽어오도록 확장 가능합니다.")
+        if st.button("닫기", use_container_width=True):
+            st.session_state["modal_payload"] = None
+else:
+    # 아무것도 선택되지 않은 경우 깔끔히 유지
+    pass
+
+st.write("")
+st.caption("데이터 원본: 구글 스프레드시트 → 5분 캐시")
