@@ -103,7 +103,23 @@ def load_sheet(url: str) -> pd.DataFrame:
     return df
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 2) 시트 파싱 규칙 (홀수행: 장소 / 짝수행: 동아리)
+# 2) “5층 1-7반(교실)” 제외 규칙
+#    - 층에서 숫자 추출 → 5층
+#    - 장소(pos) 정규식: 1-7 / 1-7반 / 1-7 교실 모두 제외
+# ────────────────────────────────────────────────────────────────────────────────
+_pos_17_re = re.compile(r"^1[\-\s]?7(?:\s*반|\s*교실)?$", re.IGNORECASE)
+
+def is_excluded_booth(floor_label: str, pos: str) -> bool:
+    if not floor_label or not pos:
+        return False
+    m = re.search(r"(\d+)", str(floor_label))
+    floor_num = int(m.group(1)) if m else None
+    if floor_num == 5 and _pos_17_re.match(str(pos)):
+        return True
+    return False
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 3) 시트 파싱 (홀수행: 장소 / 짝수행: 동아리)
 # ────────────────────────────────────────────────────────────────────────────────
 def parse_layout(df: pd.DataFrame):
     rows_by_floor = {}
@@ -128,6 +144,11 @@ def parse_layout(df: pd.DataFrame):
             club = club.strip() if isinstance(club, str) else club
             if not pos:
                 continue
+
+            # ★ 제외 규칙 적용: 5층 & 1-7(반/교실)인 부스는 스킵
+            if is_excluded_booth(floor_label, pos):
+                continue
+
             row_items.append({
                 "floor": floor_label or "미지정",
                 "pos": pos,
@@ -157,9 +178,8 @@ except Exception as e:
     st.stop()
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 3) 메뉴바: 층 선택 + 동아리 선택(스크롤 드롭다운, ㄱㄴㄷ 정렬)
+# 4) 메뉴바: 층 선택 + 동아리 선택(ㄱㄴㄷ 정렬)
 # ────────────────────────────────────────────────────────────────────────────────
-# 동아리 목록 수집(중복 제거, '미정' 제외)
 club_set = set()
 for _f, rows in rows_by_floor.items():
     for row in rows:
@@ -167,7 +187,7 @@ for _f, rows in rows_by_floor.items():
             c = (it["club"] or "").strip()
             if c and c != "미정":
                 club_set.add(c)
-clubs_sorted = sorted(club_set)  # 한글 ㄱㄴㄷ 순 정렬에 충분
+clubs_sorted = sorted(club_set)
 
 left, right = st.columns([2, 3])
 with left:
@@ -175,10 +195,10 @@ with left:
 with right:
     sel_club = st.selectbox("동아리 선택", options=["전체"] + clubs_sorted, index=0, help="스크롤해서 동아리명을 선택하세요.")
 
-st.caption("• 카드(네모박스)를 클릭하면 상단에 상세 팝업이 열립니다. (상단=장소, 한가운데=동아리)")
+st.caption("• 부스 카드를 클릭하면 상단에 팝업이 열립니다. (상단=장소, 한가운데=동아리)")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 4) 선택 상태: 쿼리스트링 sel=... (카드 클릭 시)
+# 5) 선택 상태: 쿼리스트링 sel=...
 # ────────────────────────────────────────────────────────────────────────────────
 def encode_sel(item: dict) -> str:
     payload = f"{item['floor']}|{item['col_index']}|{item['pos']}|{item['club']}"
@@ -197,7 +217,7 @@ sel_param = qparams.get("sel", [None])[0]
 current_sel = decode_sel(sel_param) if sel_param else None
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 5) 팝업(모달 대체) - 상단 카드
+# 6) 팝업(모달 대체) - 상단 카드 (시뮬레이션용 기본 필드)
 # ────────────────────────────────────────────────────────────────────────────────
 def render_popup(selected):
     if not selected:
@@ -209,7 +229,8 @@ def render_popup(selected):
         st.markdown(f"- **장소(교실/위치)**: {selected['pos']}")
         st.markdown(f"- **동아리명**: {selected['club']}")
         st.divider()
-        st.info("스프레드시트에 소개/담당/비고 열을 추가하면 이 팝업에 더 자세히 표시할 수 있어요.")
+        # 시뮬레이션용 안내 문구 (추후 실제 소개/담당/시간표 등으로 교체 예정)
+        st.info("팝업 예시입니다. 스프레드시트에 '소개/담당교사/활동시간/비고' 열을 추가해 연결해드릴게요.")
         col1, col2 = st.columns([1,5])
         with col1:
             if st.button("닫기", use_container_width=True):
@@ -221,7 +242,7 @@ def render_popup(selected):
 render_popup(current_sel)
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 6) 배치도 렌더링 (필터: 층/동아리)
+# 7) 배치도 렌더링 (필터: 층/동아리)
 # ────────────────────────────────────────────────────────────────────────────────
 def match_filters(item):
     if sel_club != "전체" and str(item["club"]) != sel_club:
