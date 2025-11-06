@@ -97,6 +97,8 @@ MAIN_SHEET_NAME = pick("main_sheet", "MAIN_SHEET_NAME", DEFAULT_MAIN_SHEET_NAME)
 DETAILS_SHEET_NAME = pick("details_sheet", "DETAILS_SHEET_NAME", DEFAULT_DETAILS_SHEET_NAME)
 
 # ===================== 유틸 =====================
+BLANK_TOKENS = {"-", "—", "–"}  # 하이픈류도 빈 값 취급
+
 def s(x):
     """안전 문자열 변환"""
     if x is None:
@@ -108,18 +110,30 @@ def s(x):
         pass
     return x if isinstance(x, str) else str(x)
 
+def normalize_spaces(text: str) -> str:
+    """
+    눈에 안 보이는 공백 제거 + 줄바꿈/탭 정리:
+    NBSP(\u00A0), 전각스페이스(\u3000), 제로폭(\u200B-\u200D), BOM(\ufeff) 제거
+    """
+    t = s(text)
+    # 제거할 특수 공백/컨트롤
+    t = t.replace("\ufeff", "")  # BOM
+    t = t.replace("\u200b", "").replace("\u200c", "").replace("\u200d", "")  # zero-width
+    t = t.replace("\u00a0", " ")  # NBSP -> space
+    t = t.replace("\u3000", " ")  # 전각스페이스 -> space
+    # 줄바꿈/탭을 공백으로 통일
+    t = t.replace("\r\n", " ").replace("\n", " ").replace("\t", " ")
+    # 다중 공백 압축
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
+
 def is_blank(x: str) -> bool:
-    """스페이스/전각스페이스/탭 등 공백만 있으면 True"""
-    if x is None:
-        return True
-    # 다양한 공백 문자 제거
-    t = s(x)
-    # \u3000(전각 스페이스) 등도 제거
-    t = t.replace("\u3000", " ").strip()
-    return t == ""
+    """보이는 텍스트가 사실상 비었는지 판단"""
+    t = normalize_spaces(x)
+    return (t == "" or t in BLANK_TOKENS)
 
 def html_escape(t): 
-    return s(t).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+    return normalize_spaces(t).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
 
 def extract_sheet_id(url):
     m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
@@ -133,12 +147,11 @@ def to_named_sheet_csv_url(url, sheet_name):
 @st.cache_data(ttl=300)
 def load_csv(url, header=None):
     df = pd.read_csv(url, header=header, dtype=str)
-    # 문자열 정리
-    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    # 문자열 정리(기본 trim까지만; 본 처리는 normalize_spaces에서 수행)
     df = df.where(pd.notnull(df), None)
     return df
 
-# 캐시 강제 새로고침 (버튼/쿼리)
+# 캐시 강제 새로고침
 refresh_q = qp().get("refresh", ["0"])[0] == "1"
 col_refresh, _ = st.columns([1, 8])
 with col_refresh:
@@ -156,7 +169,7 @@ def is_excluded_booth(floor_label, pos):
 
 # 이름 보정
 def normalize_club_name(name):
-    name = s(name).strip()
+    name = normalize_spaces(name)
     if name == "": return ""
     if name == "음-세-듣": name = "음-세-들"  # 오타 교정
     return name
@@ -186,24 +199,22 @@ def parse_layout(df: pd.DataFrame):
         if row_pos is None or row_club is None:
             continue
 
-        floor_label = s(row_pos.iloc[0]).strip()
+        floor_label = normalize_spaces(row_pos.iloc[0] if 0 < len(row_pos) else "")
         if is_blank(floor_label) and row_club is not None:
-            floor_label = s(row_club.iloc[0]).strip()
+            floor_label = normalize_spaces(row_club.iloc[0] if 0 < len(row_club) else "")
         if is_blank(floor_label):
             floor_label = "미지정"
 
         row_items = []
         for c in range(data_start_col, n_cols):
-            pos_raw  = s(row_pos.iloc[c])
-            club_raw = s(row_club.iloc[c])
+            pos_raw  = row_pos.iloc[c] if c < len(row_pos) else None
+            club_raw = row_club.iloc[c] if c < len(row_club) else None
 
-            # 공백만 있는 셀은 표시하지 않음
-            if is_blank(pos_raw) or is_blank(club_raw):
-                continue
+            pos  = normalize_spaces(pos_raw)
+            club = normalize_club_name(club_raw)
 
-            pos  = pos_raw.strip()
-            club_norm = normalize_club_name(club_raw)
-            if is_blank(pos) or is_blank(club_norm):
+            # 공백/하이픈만 있으면 렌더하지 않음
+            if is_blank(pos) or is_blank(club):
                 continue
 
             if is_excluded_booth(floor_label, pos):
@@ -212,7 +223,7 @@ def parse_layout(df: pd.DataFrame):
             row_items.append({
                 "floor": floor_label,
                 "pos": pos,
-                "club": club_norm,
+                "club": club,
                 "col_index": c
             })
 
@@ -239,7 +250,7 @@ except Exception as e:
 details_by_club = {}
 try:
     det_df = load_csv(to_named_sheet_csv_url(SHEET_URL, DETAILS_SHEET_NAME), header=0)
-    col_map = {(c.strip() if isinstance(c, str) else c): c for c in det_df.columns}
+    col_map = {(normalize_spaces(c) if isinstance(c, str) else c): c for c in det_df.columns}
     name_key = next((k for k in ["동아리명","동아리","클럽명","club","Club","name","Name"] if k in col_map), None)
     if not name_key:
         st.warning("상세 시트에 '동아리명' 헤더가 없습니다. 헤더를 확인해주세요.")
@@ -251,9 +262,9 @@ try:
                 continue
             canon = ALIAS_TO_CANON.get(club_name, club_name)
             details_by_club[canon] = {
-                "장소": s(row.get(col_map.get("장소",""), "")).strip(),
-                "체험유형": s(row.get(col_map.get("체험유형",""), "")).strip(),
-                "세부내용": s(row.get(col_map.get("세부내용",""), "")).strip(),
+                "장소": normalize_spaces(row.get(col_map.get("장소",""), "")),
+                "체험유형": normalize_spaces(row.get(col_map.get("체험유형",""), "")),
+                "세부내용": normalize_spaces(row.get(col_map.get("세부내용",""), "")),
             }
 except Exception as e:
     st.warning(f"상세 시트를 불러오지 못했습니다. 시트명 '{DETAILS_SHEET_NAME}'를 확인해주세요. 오류: {e}")
@@ -263,7 +274,7 @@ club_set = set()
 for _f, rows in rows_by_floor.items():
     for row in rows:
         for it in row:
-            c = s(it.get("club")).strip()
+            c = normalize_spaces(it.get("club"))
             if not is_blank(c):
                 club_set.add(ALIAS_TO_CANON.get(c, c))
 clubs_sorted = sorted(club_set)
@@ -275,7 +286,7 @@ with right:
     sel_club = st.selectbox("동아리 선택", options=["전체"] + clubs_sorted, index=0,
                             help="스크롤해서 동아리명을 선택하세요.")
 
-st.caption(f"• 데이터: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'  • 호버=풍선 / 클릭=같은 탭 Popover  • 공백 셀은 표시하지 않음")
+st.caption(f"• 데이터: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'  • 호버=풍선 / 클릭=같은 탭 Popover  • 공백/보이지 않는 공백 제거 적용")
 
 # ===================== 선택 상태 (?sel=...) =====================
 def encode_sel(item):
@@ -373,4 +384,4 @@ else:
     render_floor(sel_floor, rows_by_floor.get(sel_floor, []), sel_club)
 
 st.write("")
-st.caption(f"데이터 원본: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}' · 공백 셀 미표시 · 5층 1-7 제외 · 층 내림차순  • 강제 새로고침: 버튼 또는 URL에 ?refresh=1")
+st.caption(f"데이터 원본: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}' · 보이지 않는 공백 제거 · 5층 1-7 제외 · 층 내림차순  • 강제 새로고침: 버튼 또는 URL에 ?refresh=1")
