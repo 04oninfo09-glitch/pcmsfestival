@@ -10,16 +10,15 @@ TITLE = "배재중학교 동아리 발표회"
 st.title(TITLE)
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 전역 스타일: 균일 크기의 '클릭 카드' (상단=장소, 중앙=동아리)
+# 전역 스타일: 균일 카드(상단=장소, 중앙=동아리)
 # ────────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* 카드 컨테이너 그리드에 넣기 전에 a.booth 자체가 카드 형태 */
 a.booth {
   position: relative;
   display: block;
   width: 100%;
-  height: 130px;                 /* ← 박스 높이(원하면 조절) */
+  height: 130px;                 /* 박스 높이 */
   border: 1px solid #e6e6e6;
   border-radius: 12px;
   text-decoration: none;
@@ -27,56 +26,53 @@ a.booth {
   box-sizing: border-box;
   overflow: hidden;
 }
-
-/* 호버 효과 */
 a.booth:hover { border-color: #bdbdbd; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
 
-/* 장소(상단, 가운데 정렬) */
 a.booth .loc {
   position: absolute;
-  top: 8px;                      /* 상단 여백 */
-  left: 50%;
-  transform: translateX(-50%);
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: #333;
-  text-align: center;
-  line-height: 1.1;
-  padding: 0 6px;
-  max-width: 90%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  top: 8px; left: 50%; transform: translateX(-50%);
+  font-weight: 700; font-size: 0.95rem; color: #333; text-align: center;
+  padding: 0 6px; max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
-/* 동아리명(박스 정가운데) */
 a.booth .club {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -40%);  /* -40%로 살짝 위로 올려 시각 균형 */
-  font-size: 1.0rem;
-  font-weight: 500;
-  color: #111;
-  text-align: center;
-  padding: 0 8px;
-  max-width: 92%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  top: 50%; left: 50%; transform: translate(-50%, -40%);
+  font-size: 1.0rem; font-weight: 500; color: #111; text-align: center;
+  padding: 0 8px; max-width: 92%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* 모바일/좁은 화면에서 폰트 조금 줄이기 */
 @media (max-width: 640px) {
   a.booth { height: 110px; }
   a.booth .loc { font-size: 0.9rem; }
   a.booth .club { font-size: 0.95rem; }
 }
 
-/* 상단 팝업 카드 여백 정리 */
 div.popup-card { background:#fff; border:1px solid #eee; border-radius:12px; padding:14px 16px; }
 </style>
 """, unsafe_allow_html=True)
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 0) 시트 URL 결정(메뉴바 UI 없이 내부에서만 설정)
+#    우선순위: ?sheet=... → st.secrets["SHEET_URL"] → DEFAULT_SHEET_URL
+# ────────────────────────────────────────────────────────────────────────────────
+DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1dJr5dVJ50-FPD1WD2_TDwuQOK-wFjPrSBs6PYmQlEAU/edit?usp=sharing"
+
+def get_sheet_url() -> str:
+    # 1) 쿼리스트링(sheet) 우선
+    q = st.experimental_get_query_params()
+    if "sheet" in q and len(q["sheet"]) > 0 and q["sheet"][0].strip():
+        return q["sheet"][0].strip()
+    # 2) secrets
+    try:
+        sec = st.secrets.get("SHEET_URL", "").strip()
+        if sec:
+            return sec
+    except Exception:
+        pass
+    # 3) 기본값
+    return DEFAULT_SHEET_URL
+
+SHEET_URL = get_sheet_url()
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 1) 구글시트 불러오기 (CSV export)
@@ -109,12 +105,6 @@ def load_sheet(url: str) -> pd.DataFrame:
     df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
     df = df.where(pd.notnull(df), None)
     return df
-
-sheet_url = st.sidebar.text_input(
-    "구글 스프레드시트 URL",
-    value="https://docs.google.com/spreadsheets/d/1dJr5dVJ50-FPD1WD2_TDwuQOK-wFjPrSBs6PYmQlEAU/edit?usp=sharing",
-    help="A열=층, 홀수행=장소(교실/위치), 짝수행=동아리명 형식으로 작성해 주세요."
-)
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 2) 시트 파싱 규칙 (홀수행: 장소 / 짝수행: 동아리)
@@ -164,14 +154,14 @@ def parse_layout(df: pd.DataFrame):
 # 데이터 로드
 error_box = st.empty()
 try:
-    raw_df = load_sheet(sheet_url)
+    raw_df = load_sheet(SHEET_URL)
     floors, rows_by_floor = parse_layout(raw_df)
 except Exception as e:
     error_box.error(f"스프레드시트를 불러오는 중 오류가 발생했습니다.\n\n{e}")
     st.stop()
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 3) 필터/검색
+# 3) 필터/검색 (UI 단순화, 시트 URL 입력창 제거)
 # ────────────────────────────────────────────────────────────────────────────────
 left, right = st.columns([2, 3])
 with left:
@@ -182,9 +172,8 @@ with right:
 st.caption("• 카드(네모박스)를 클릭하면 상단에 상세 팝업이 열립니다. (상단=장소, 한가운데=동아리)")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 4) 선택 상태: 쿼리스트링 sel=... 으로 전달/해석
+# 4) 선택 상태: 쿼리스트링 sel=... (호환성 위해 experimental_ API 사용)
 # ────────────────────────────────────────────────────────────────────────────────
-# sel payload를 "floor|col|pos|club" 형태로 인코딩
 def encode_sel(item: dict) -> str:
     payload = f"{item['floor']}|{item['col_index']}|{item['pos']}|{item['club']}"
     return urllib.parse.quote(payload, safe='')
@@ -198,8 +187,8 @@ def decode_sel(s: str):
         return None
 
 # 현재 선택 읽기
-sel_param = st.query_params.get("sel", [None])
-sel_param = sel_param[0] if isinstance(sel_param, list) else sel_param
+qparams = st.experimental_get_query_params()
+sel_param = qparams.get("sel", [None])[0]
 current_sel = decode_sel(sel_param) if sel_param else None
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -219,11 +208,10 @@ def render_popup(selected):
         col1, col2 = st.columns([1,5])
         with col1:
             if st.button("닫기", use_container_width=True):
-                # sel 파라미터 제거(=팝업 닫기)
-                qp = dict(st.query_params)
-                qp.pop("sel", None)
-                st.query_params.clear()
-                st.query_params.update(qp)
+                # sel 파라미터 제거
+                new_qp = dict(st.experimental_get_query_params())
+                new_qp.pop("sel", None)
+                st.experimental_set_query_params(**new_qp)
         st.markdown("</div>", unsafe_allow_html=True)
 
 render_popup(current_sel)
@@ -238,12 +226,6 @@ def match_query(item, q):
     return (ql in str(item["pos"]).lower()) or (ql in str(item["club"]).lower()) or (ql in str(item["floor"]).lower())
 
 def booth_card_html(item: dict) -> str:
-    """
-    HTML 카드(링크). 클릭하면 ?sel=... 로 이동해 선택 상태를 만든다.
-    카드 내부:
-      - .loc : 상단 가운데(굵게)
-      - .club: 카드 정가운데(약간 위로)
-    """
     sel = encode_sel(item)
     href = f"?sel={sel}"
     loc = (item["pos"] or "").replace("<", "&lt;").replace(">", "&gt;")
