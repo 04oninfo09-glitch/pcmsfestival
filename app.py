@@ -8,34 +8,39 @@ st.set_page_config(page_title="배재중학교 동아리 발표회", layout="wid
 st.title("배재중학교 동아리 발표회")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 전역 CSS: 균일 카드 + 호버 풍선 + 클릭 고정 Popover
+# 전역 CSS: 균일 카드 + 호버 풍선 + 클릭 Popover (form+button 기반: 같은 탭 유지)
 # ────────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* 카드 전체 */
-a.booth {
+/* 공통 레이아웃 */
+.booth-form { margin: 0; }
+.booth-form input[type="hidden"] { display:none; }
+
+/* 카드 버튼 */
+button.booth {
   position: relative;
   display: block;
   width: 100%;
   height: 130px;                 /* 박스 높이 */
   border: 1px solid #e6e6e6;
   border-radius: 12px;
-  text-decoration: none;
   background: #ffffff;
   box-sizing: border-box;
   overflow: hidden;
+  cursor: pointer;
+  padding: 0;                     /* 내부 절대배치로 라벨 배치 */
 }
-a.booth:hover { border-color: #bdbdbd; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+button.booth:hover { border-color: #bdbdbd; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
 
 /* 장소(상단 중앙) */
-a.booth .loc {
+button.booth .loc {
   position: absolute;
   top: 8px; left: 50%; transform: translateX(-50%);
   font-weight: 700; font-size: 0.95rem; color: #333; text-align: center;
   padding: 0 6px; max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* 동아리(정중앙 살짝 위) */
-a.booth .club {
+button.booth .club {
   position: absolute;
   top: 50%; left: 50%; transform: translate(-50%, -40%);
   font-size: 1.0rem; font-weight: 500; color: #111; text-align: center;
@@ -43,7 +48,7 @@ a.booth .club {
 }
 
 /* 호버 풍선 미리보기 */
-a.booth .hover-pop {
+button.booth .hover-pop {
   position: absolute;
   left: 50%;
   bottom: 6px;                   /* 카드 하단에서 살짝 위 */
@@ -63,7 +68,7 @@ a.booth .hover-pop {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-a.booth .hover-pop::after {
+button.booth .hover-pop::after {
   content: "";
   position: absolute;
   bottom: -6px;
@@ -73,12 +78,12 @@ a.booth .hover-pop::after {
   border-style: solid;
   border-color: #1f2937 transparent transparent transparent;
 }
-a.booth:hover .hover-pop {
+button.booth:hover .hover-pop {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
 
-/* 클릭 고정 Popover(카드 아래에 렌더) */
+/* 클릭 고정 Popover(카드 아래) */
 div.fixed-pop {
   background:#fff; border:1px solid #e5e7eb; border-radius:12px;
   padding: 12px 14px; margin-top: 8px;
@@ -88,9 +93,9 @@ div.fixed-pop h4 { margin:0 0 6px 0; }
 div.fixed-pop .meta { color:#6b7280; font-size:0.9rem; margin-bottom:8px; }
 
 @media (max-width: 640px) {
-  a.booth { height: 110px; }
-  a.booth .loc { font-size: 0.9rem; }
-  a.booth .club { font-size: 0.95rem; }
+  button.booth { height: 110px; }
+  button.booth .loc { font-size: 0.9rem; }
+  button.booth .club { font-size: 0.95rem; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -122,7 +127,6 @@ def to_csv_url(google_sheet_url: str) -> str:
     if not m:
         return google_sheet_url
     sheet_id = m.group(1)
-
     parsed = urlparse(google_sheet_url)
     q = parse_qs(parsed.query)
     gid = None
@@ -132,7 +136,6 @@ def to_csv_url(google_sheet_url: str) -> str:
         frag_gid = re.search(r"gid=(\\d+)", parsed.fragment)
         if frag_gid:
             gid = frag_gid.group(1)
-
     base = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
     if gid:
         base += f"&gid={gid}"
@@ -208,6 +211,11 @@ except Exception as e:
     st.stop()
 
 # ────────────────────────────────────────────────────────────────────────────────
+# 상단 탭(선택): 배치도 / 동아리 탭형 보기
+# ────────────────────────────────────────────────────────────────────────────────
+tabs = st.tabs(["배치도", "동아리 탭형 보기"])
+
+# ────────────────────────────────────────────────────────────────────────────────
 # 메뉴바: 층 선택 + 동아리 선택(ㄱㄴㄷ 정렬)
 # ────────────────────────────────────────────────────────────────────────────────
 club_set = set()
@@ -219,13 +227,15 @@ for _f, rows in rows_by_floor.items():
                 club_set.add(c)
 clubs_sorted = sorted(club_set)
 
-left, right = st.columns([2, 3])
-with left:
-    sel_floor = st.selectbox("층 선택", options=["전체"] + floors, index=0)
-with right:
-    sel_club = st.selectbox("동아리 선택", options=["전체"] + clubs_sorted, index=0, help="스크롤해서 동아리명을 선택하세요.")
+with tabs[0]:
+    left, right = st.columns([2, 3])
+    with left:
+        sel_floor = st.selectbox("층 선택", options=["전체"] + floors, index=0, key="floor_sel_main")
+    with right:
+        sel_club = st.selectbox("동아리 선택", options=["전체"] + clubs_sorted, index=0,
+                                help="스크롤해서 동아리명을 선택하세요.", key="club_sel_main")
 
-st.caption("• 카드 위에 마우스를 올리면 미리보기 풍선이 뜨고, 클릭하면 카드 아래에 Popover가 열립니다.")
+    st.caption("• 카드 위 호버: 미리보기 풍선 / 클릭: 같은 탭에서 카드 아래 Popover가 열립니다.")
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 선택 상태: ?sel=... (클릭 시) → 해당 카드 아래에 고정 Popover 렌더
@@ -252,24 +262,26 @@ def same_item(a, b) -> bool:
             and a["pos"] == b["pos"] and a["club"] == b["club"])
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 카드 HTML (호버 풍선 포함)
+# 카드(같은 탭 제출) HTML: <form method="get"><button type="submit" class="booth">...</button></form>
 # ────────────────────────────────────────────────────────────────────────────────
 def booth_card_html(item: dict) -> str:
     sel = encode_sel(item)
-    href = f"?sel={sel}"
     loc = (item["pos"] or "").replace("<", "&lt;").replace(">", "&gt;")
     club = (item["club"] or "미정").replace("<", "&lt;").replace(">", "&gt;")
     hover_text = f"{loc} · {club}"
     return f'''
-    <a class="booth" href="{href}">
-      <span class="loc">{loc}</span>
-      <span class="club">{club}</span>
-      <span class="hover-pop">{hover_text}</span>
-    </a>
+    <form class="booth-form" method="get">
+      <input type="hidden" name="sel" value="{sel}">
+      <button class="booth" type="submit">
+        <span class="loc">{loc}</span>
+        <span class="club">{club}</span>
+        <span class="hover-pop">{hover_text}</span>
+      </button>
+    </form>
     '''
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 고정 Popover 렌더(카드 바로 아래)
+# 고정 Popover(카드 아래)
 # ────────────────────────────────────────────────────────────────────────────────
 def render_fixed_popover(item: dict):
     st.markdown('<div class="fixed-pop">', unsafe_allow_html=True)
@@ -285,17 +297,17 @@ def render_fixed_popover(item: dict):
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 배치도 렌더(필터: 층/동아리) + 선택된 카드 아래 Popover
+# 필터/렌더
 # ────────────────────────────────────────────────────────────────────────────────
-def match_filters(item):
-    if sel_club != "전체" and str(item["club"]) != sel_club:
+def match_filters(item, sel_club_val):
+    if sel_club_val != "전체" and str(item["club"]) != sel_club_val:
         return False
     return True
 
-def render_floor(floor_label, rows):
+def render_floor(floor_label, rows, sel_club_val):
     st.subheader(f"🧭 {floor_label}")
     for row_items in rows:
-        visible = [x for x in row_items if match_filters(x)]
+        visible = [x for x in row_items if match_filters(x, sel_club_val)]
         if not visible: continue
         visible.sort(key=lambda x: x["col_index"])
         cols = st.columns(len(visible))
@@ -305,11 +317,36 @@ def render_floor(floor_label, rows):
                 if same_item(item, current_sel):
                     render_fixed_popover(item)
 
-if sel_floor == "전체":
-    for f in floors:
-        render_floor(f, rows_by_floor[f])
-else:
-    render_floor(sel_floor, rows_by_floor.get(sel_floor, []))
+with tabs[0]:
+    if st.session_state.get("floor_sel_main", "전체") == "전체":
+        for f in floors:
+            render_floor(f, rows_by_floor[f], st.session_state.get("club_sel_main", "전체"))
+    else:
+        f = st.session_state["floor_sel_main"]
+        render_floor(f, rows_by_floor.get(f, []), st.session_state.get("club_sel_main", "전체"))
+
+# ────────────────────────────────────────────────────────────────────────────────
+# [보너스] 동아리 탭형 보기: ㄱㄴㄷ 순 목록 + 클릭 시 같은 탭 Popover
+# ────────────────────────────────────────────────────────────────────────────────
+with tabs[1]:
+    st.write("동아리를 ㄱㄴㄷ 순으로 스크롤해 고를 수 있어요.")
+    club_choice = st.selectbox("동아리 선택(탭형 보기)", options=[""] + sorted(club_set), index=0)
+    if club_choice:
+        # 해당 동아리의 모든 부스 위치 나열
+        matches = []
+        for f, rows in rows_by_floor.items():
+            for row in rows:
+                for it in row:
+                    if it["club"] == club_choice:
+                        matches.append(it)
+        if matches:
+            st.write(f"**'{club_choice}'** 부스 위치")
+            for it in matches:
+                col = st.columns([1,3])[0]
+                with col:
+                    st.markdown(booth_card_html(it), unsafe_allow_html=True)
+        else:
+            st.info("해당 동아리를 찾을 수 없어요.")
 
 st.write("")
-st.caption("데이터 원본: 구글 스프레드시트 → 5분 캐시")
+st.caption("데이터 원본: 구글 스프레드시트 → 5분 캐시 (5층 1-7반 제외)")
