@@ -7,15 +7,12 @@ import streamlit as st
 st.set_page_config(page_title="배재중학교 동아리 발표회", layout="wide")
 st.title("배재중학교 동아리 발표회")
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 스타일: 균일 카드 + 호버 풍선 + 클릭 Popover(같은 탭 유지)
-# ────────────────────────────────────────────────────────────────────────────────
+# ===================== 스타일 =====================
 st.markdown("""
 <style>
 .booth-form { margin: 0; }
 .booth-form input[type="hidden"] { display:none; }
 
-/* 카드 버튼 */
 button.booth {
   position: relative;
   display: block;
@@ -31,14 +28,12 @@ button.booth {
 }
 button.booth:hover { border-color: #bdbdbd; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
 
-/* 장소(상단 중앙) */
 button.booth .loc {
   position: absolute;
   top: 8px; left: 50%; transform: translateX(-50%);
   font-weight: 700; font-size: 0.95rem; color: #333; text-align: center;
   padding: 0 6px; max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* 동아리(정중앙 살짝 위) */
 button.booth .club {
   position: absolute;
   top: 50%; left: 50%; transform: translate(-50%, -40%);
@@ -46,7 +41,6 @@ button.booth .club {
   padding: 0 8px; max-width: 92%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* 호버 풍선 */
 button.booth .hover-pop {
   position: absolute;
   left: 50%;
@@ -65,7 +59,6 @@ button.booth .hover-pop::after {
 }
 button.booth:hover .hover-pop { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-/* 클릭 Popover(카드 아래) */
 div.fixed-pop {
   background:#fff; border:1px solid #e5e7eb; border-radius:12px;
   padding: 12px 14px; margin-top: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.08);
@@ -81,100 +74,70 @@ div.fixed-pop .meta { color:#6b7280; font-size:0.9rem; margin-bottom:8px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 설정: 시트 URL + 시트명(고정 기본값)
-# ────────────────────────────────────────────────────────────────────────────────
+# ===================== 기본 설정 =====================
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1dJr5dVJ50-FPD1WD2_TDwuQOK-wFjPrSBs6PYmQlEAU/edit?usp=sharing"
 DEFAULT_MAIN_SHEET_NAME = "실내 부스 배치도"
 DEFAULT_DETAILS_SHEET_NAME = "동아리 활동 설명"
 
-def get_qp():
-    return st.experimental_get_query_params()
+def qp(): return st.experimental_get_query_params()
 
-def pick_sheet_url():
-    qp = get_qp()
-    if "sheet" in qp and qp["sheet"] and qp["sheet"][0].strip():
-        return qp["sheet"][0].strip()
+def pick(key, secret, default):
+    q = qp()
+    if key in q and q[key] and q[key][0].strip():
+        return q[key][0].strip()
     try:
-        sec = st.secrets.get("SHEET_URL", "").strip()
-        if sec:
-            return sec
+        v = st.secrets.get(secret, "").strip()
+        if v: return v
     except Exception:
         pass
-    return DEFAULT_SHEET_URL
+    return default
 
-def pick_sheet_name(qp_key, secret_key, default_name):
-    qp = get_qp()
-    if qp_key in qp and qp[qp_key] and qp[qp_key][0].strip():
-        return qp[qp_key][0].strip()
-    try:
-        sec = st.secrets.get(secret_key, "").strip()
-        if sec:
-            return sec
-    except Exception:
-        pass
-    return default_name
+SHEET_URL = pick("sheet", "SHEET_URL", DEFAULT_SHEET_URL)
+MAIN_SHEET_NAME = pick("main_sheet", "MAIN_SHEET_NAME", DEFAULT_MAIN_SHEET_NAME)
+DETAILS_SHEET_NAME = pick("details_sheet", "DETAILS_SHEET_NAME", DEFAULT_DETAILS_SHEET_NAME)
 
-SHEET_URL = pick_sheet_url()
-MAIN_SHEET_NAME = pick_sheet_name("main_sheet", "MAIN_SHEET_NAME", DEFAULT_MAIN_SHEET_NAME)
-DETAILS_SHEET_NAME = pick_sheet_name("details_sheet", "DETAILS_SHEET_NAME", DEFAULT_DETAILS_SHEET_NAME)
-
-# ────────────────────────────────────────────────────────────────────────────────
-# 안전 문자열 헬퍼: 어떤 타입이 와도 안전하게 '' 또는 str로 변환
-# ────────────────────────────────────────────────────────────────────────────────
+# ===================== 유틸 =====================
 def s(x):
-    if x is None:
-        return ""
+    """안전 문자열 변환"""
+    if x is None: return ""
     try:
-        if isinstance(x, float) and pd.isna(x):
-            return ""
+        if isinstance(x, float) and pd.isna(x): return ""
     except Exception:
         pass
     return x if isinstance(x, str) else str(x)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Google Sheets → CSV (시트명 기반 접근: gviz/tq)
-# ────────────────────────────────────────────────────────────────────────────────
-def extract_sheet_id(google_sheet_url):
-    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", google_sheet_url)
+def html_escape(t): 
+    return s(t).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+
+def extract_sheet_id(url):
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
     return m.group(1) if m else None
 
-def to_named_sheet_csv_url(google_sheet_url, sheet_name):
-    sid = extract_sheet_id(google_sheet_url)
-    if not sid:
-        return google_sheet_url
-    quoted = urllib.parse.quote(sheet_name)
-    return f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={quoted}"
+def to_named_sheet_csv_url(url, sheet_name):
+    sid = extract_sheet_id(url)
+    if not sid: return url
+    return f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(sheet_name)}"
 
 @st.cache_data(ttl=300)
 def load_csv(url, header=None):
     df = pd.read_csv(url, header=header, dtype=str)
-    # 문자열로 강제 + NaN→None 변환
     df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
     df = df.where(pd.notnull(df), None)
     return df
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 제외 규칙: 5층 1-7(반/교실)
-# ────────────────────────────────────────────────────────────────────────────────
+# 5층 1-7 제외
 _pos_17_re = re.compile(r"^1[\-\s]?7(?:\s*반|\s*교실)?$", re.IGNORECASE)
 def is_excluded_booth(floor_label, pos):
     if not floor_label or not pos: return False
     m = re.search(r"(\d+)", str(floor_label))
     floor_num = int(m.group(1)) if m else None
-    if floor_num == 5 and _pos_17_re.match(str(pos)):
-        return True
-    return False
+    return bool(floor_num == 5 and _pos_17_re.match(str(pos)))
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 이름 보정(별칭/오타)
-# ────────────────────────────────────────────────────────────────────────────────
+# 이름 보정
 def normalize_club_name(name):
     name = s(name).strip()
-    if name == "": 
-        return ""
-    if name == "음-세-듣":   # 오타 교정
-        name = "음-세-들"
+    if name == "": return ""
+    if name == "음-세-듣": name = "음-세-들"  # 오타 교정
     return name
 
 ALIAS_TO_CANON = {
@@ -182,49 +145,67 @@ ALIAS_TO_CANON = {
     "음-세-들": "음악으로 세상 들여다 보기반",
 }
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 메인 배치 시트 파싱 (홀수행=장소, 짝수행=동아리) + 5→…→1층 정렬
-# ────────────────────────────────────────────────────────────────────────────────
-def parse_layout(df):
+# ===================== 배치 파서 (A열=층, B열~ / 1행부터: 홀수=위치, 짝수=동아리) =====================
+def parse_layout(df: pd.DataFrame):
+    """
+    사람 기준 행 번호:
+      1,3,5,...(홀수행)  = 위치행
+      2,4,6,...(짝수행)  = 동아리행
+    파이썬 인덱스(0부터)로는:
+      r(0,2,4,...) = 위치행, r+1 = 동아리행
+    A열(0번열)은 '층', B열(1번열)부터 데이터.
+    """
     rows_by_floor = {}
     n_rows, n_cols = df.shape
-    for r in range(0, n_rows, 2):
-        row_pos = df.iloc[r] if r < n_rows else None
-        row_club = df.iloc[r+1] if (r+1) < n_rows else None
-        if row_pos is None:
-            continue
+    # 최소 2열(B열 존재) 보장
+    data_start_col = 1
 
-        floor_label = s(row_pos.iloc[0])
-        if not floor_label and row_club is not None:
-            floor_label = s(row_club.iloc[0])
-        floor_label = floor_label.strip()
+    for r in range(0, n_rows, 2):
+        row_pos = df.iloc[r] if r < n_rows else None           # 위치행
+        row_club = df.iloc[r+1] if (r+1) < n_rows else None     # 동아리행 (없으면 스킵)
+
+        if row_pos is None or row_club is None:
+            continue  # 동아리행이 없으면 해당 묶음 무시
+
+        floor_label = s(row_pos.iloc[0]).strip()  # A열=층 (위치행 기준)
+        if floor_label == "" and row_club is not None:
+            floor_label = s(row_club.iloc[0]).strip()
+        if floor_label == "":
+            floor_label = "미지정"
 
         row_items = []
-        for c in range(1, n_cols):
-            pos  = s(row_pos.iloc[c]).strip() if row_pos is not None else ""
-            club = normalize_club_name(s(row_club.iloc[c]) if row_club is not None else "")
+        # B열부터 끝까지
+        for c in range(data_start_col, n_cols):
+            pos = s(row_pos.iloc[c]).strip()
+            club_raw = s(row_club.iloc[c]).strip()
+
             if not pos:
-                continue
+                continue  # 위치가 없으면 부스 없음
+
             if is_excluded_booth(floor_label, pos):
                 continue
+
+            club_norm = normalize_club_name(club_raw)
+            club = club_norm if club_norm else "미정"  # 진짜 비었을 때만 미정
+
             row_items.append({
-                "floor": floor_label or "미지정",
+                "floor": floor_label,
                 "pos": pos,
-                "club": club or "미정",
+                "club": club,
                 "col_index": c
             })
-        if row_items:
-            rows_by_floor.setdefault(floor_label or "미지정", []).append(row_items)
 
+        if row_items:
+            rows_by_floor.setdefault(floor_label, []).append(row_items)
+
+    # 층 내림차순(5→…→1)
     def floor_num(label):
         m = re.search(r"(\d+)", str(label))
         return int(m.group(1)) if m else -999999
     floors = sorted(rows_by_floor.keys(), key=lambda x: (-floor_num(x), str(x)))
     return floors, rows_by_floor
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 데이터 로드
-# ────────────────────────────────────────────────────────────────────────────────
+# ===================== 데이터 로드 =====================
 error_box = st.empty()
 try:
     main_df = load_csv(to_named_sheet_csv_url(SHEET_URL, MAIN_SHEET_NAME), header=None)
@@ -233,14 +214,11 @@ except Exception as e:
     error_box.error(f"배치 시트를 불러오는 중 오류가 발생했습니다.\n\n{e}")
     st.stop()
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 상세 시트 로드 (동아리 활동 설명)
-# 기대 헤더: 동아리명 / 장소 / 체험유형 / 세부내용
-# ────────────────────────────────────────────────────────────────────────────────
+# ===================== 상세 시트 로드 (동아리 활동 설명) =====================
 details_by_club = {}
 try:
     det_df = load_csv(to_named_sheet_csv_url(SHEET_URL, DETAILS_SHEET_NAME), header=0)
-    col_map = { (c.strip() if isinstance(c,str) else c): c for c in det_df.columns }
+    col_map = {(c.strip() if isinstance(c, str) else c): c for c in det_df.columns}
     name_key = next((k for k in ["동아리명","동아리","클럽명","club","Club","name","Name"] if k in col_map), None)
     if not name_key:
         st.warning("상세 시트에 '동아리명' 헤더가 없습니다. 헤더를 확인해주세요.")
@@ -248,20 +226,18 @@ try:
         for _, row in det_df.iterrows():
             raw = row.get(col_map[name_key])
             club_name = normalize_club_name(raw)
-            if not club_name:
+            if not club_name: 
                 continue
             canon = ALIAS_TO_CANON.get(club_name, club_name)
             details_by_club[canon] = {
-                "장소": s(row.get(col_map.get("장소", ""), "")).strip(),
-                "체험유형": s(row.get(col_map.get("체험유형", ""), "")).strip(),
-                "세부내용": s(row.get(col_map.get("세부내용", ""), "")).strip(),
+                "장소": s(row.get(col_map.get("장소",""), "")).strip(),
+                "체험유형": s(row.get(col_map.get("체험유형",""), "")).strip(),
+                "세부내용": s(row.get(col_map.get("세부내용",""), "")).strip(),
             }
 except Exception as e:
     st.warning(f"상세 시트를 불러오지 못했습니다. 시트명 '{DETAILS_SHEET_NAME}'를 확인해주세요. 오류: {e}")
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 상단 메뉴: 층 선택 + 동아리 선택(ㄱㄴㄷ)
-# ────────────────────────────────────────────────────────────────────────────────
+# ===================== 상단 메뉴 =====================
 club_set = set()
 for _f, rows in rows_by_floor.items():
     for row in rows:
@@ -280,9 +256,7 @@ with right:
 
 st.caption(f"• 데이터: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'  • 호버=풍선 / 클릭=같은 탭 Popover")
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 선택 상태 (?sel=...)
-# ────────────────────────────────────────────────────────────────────────────────
+# ===================== 선택 상태 (?sel=...) =====================
 def encode_sel(item):
     payload = f"{item['floor']}|{item['col_index']}|{item['pos']}|{ALIAS_TO_CANON.get(item['club'], item['club'])}"
     return urllib.parse.quote(payload, safe='')
@@ -295,7 +269,7 @@ def decode_sel(sparam):
     except Exception:
         return None
 
-qparams = get_qp()
+qparams = qp()
 sel_param = qparams.get("sel", [None])[0]
 current_sel = decode_sel(sel_param) if sel_param else None
 
@@ -304,12 +278,7 @@ def same_item(a, b):
     return (a["floor"] == b["floor"] and a["col_index"] == b["col_index"]
             and a["pos"] == b["pos"] and a["club"] == b["club"])
 
-# ────────────────────────────────────────────────────────────────────────────────
-# 카드/Popover 렌더
-# ────────────────────────────────────────────────────────────────────────────────
-def html_escape(text):
-    return s(text).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
-
+# ===================== 렌더 =====================
 def booth_card_html(item):
     disp = {**item, "club": ALIAS_TO_CANON.get(item["club"], item["club"])}
     sel = encode_sel(disp)
@@ -348,12 +317,11 @@ def render_fixed_popover(item):
     col1, col2 = st.columns([1,5])
     with col1:
         if st.button("닫기", key=f"close-{item['floor']}-{item['col_index']}-{item['pos']}", use_container_width=True):
-            new_qp = dict(get_qp())
+            new_qp = dict(qp())
             new_qp.pop("sel", None)
             st.experimental_set_query_params(**new_qp)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# 필터링 & 출력
 def match_filters(item, sel_club_val):
     disp_name = ALIAS_TO_CANON.get(item["club"], item["club"])
     if sel_club_val != "전체" and disp_name != sel_club_val:
@@ -378,10 +346,10 @@ def render_floor(floor_label, rows, sel_club_val):
                     render_fixed_popover(normalized_item)
 
 if sel_floor == "전체":
-    for f in floors:  # 이미 5→…→1 내림차순
+    for f in floors:  # 5→…→1
         render_floor(f, rows_by_floor[f], sel_club)
 else:
     render_floor(sel_floor, rows_by_floor.get(sel_floor, []), sel_club)
 
 st.write("")
-st.caption(f"데이터 원본: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}'  • 5층 1-7반 제외 • 층 내림차순")
+st.caption(f"데이터 원본: '{MAIN_SHEET_NAME}' / 상세: '{DETAILS_SHEET_NAME}' · 5층 1-7 제외 · 층 내림차순")
